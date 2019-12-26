@@ -41,11 +41,7 @@ waitpid_t wrapped_waitpid(pid_t pid, int options) {
   return ret;
 }
 
-size_t size_min(size_t a, size_t b) {
-  return (a < b) ? a : b;
-}
-
-ssize_t wrapped_process_vm_readv_string(pid_t pid, char *dest, ssize_t length, u_int64_t source) {
+ssize_t wrapped_process_vm_readv_string(pid_t pid, char *dest, ssize_t length, const void* source) {
   struct iovec local = {
       .iov_base = dest,
       .iov_len = length,
@@ -60,9 +56,9 @@ ssize_t wrapped_process_vm_readv_string(pid_t pid, char *dest, ssize_t length, u
   if (remote == NULL) {
     return -1;
   }
-  size_t source_end = source + length;
-  size_t aligned_source_start = source;
-  size_t aligned_source_end = (source & (~((size_t) page_size - 1))) + (size_t) page_size;
+  size_t source_end = (size_t)source + length;
+  size_t aligned_source_start = (size_t)source;
+  size_t aligned_source_end = ((size_t)source & (~((size_t) page_size - 1))) + (size_t) page_size;
   size_t count = 0;
   while (source_end > aligned_source_end) {
     remote[count].iov_base = (void*)aligned_source_start;
@@ -75,13 +71,5 @@ ssize_t wrapped_process_vm_readv_string(pid_t pid, char *dest, ssize_t length, u
   ssize_t ret = process_vm_readv(pid, &local, 1, remote, count, 0);
   free(remote);
 
-  if (ret == -1) {
-    return -1;
-  }
-
-  return strnlen(dest, length);
-}
-
-void stop_self() {
-  raise(SIGSTOP);
+  return ret;
 }
