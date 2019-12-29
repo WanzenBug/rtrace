@@ -1,18 +1,25 @@
+use std::collections::HashMap;
+use std::env::args_os;
+use std::ffi::CString;
 use std::process::Command;
 
 use dry::{
     FingerprintEvent,
     TraceableCommand,
 };
-use std::collections::HashMap;
-use std::ffi::CString;
 
 type Error = Box<dyn std::error::Error + 'static>;
 
 fn main() -> Result<(), Error> {
-    let trace = Command::new("bash")
-        .arg("-c")
-        .arg("ls -lah /tmp")
+    let mut args = args_os();
+    let _current_prog = args.next();
+    let prog = match args.next() {
+        Some(v) => v,
+        None => return Err("Need to specify a program to run".into()),
+    };
+
+    let trace = Command::new(prog)
+        .args(args)
         .spawn_traced()?;
 
     let mut touched = Vec::new();
@@ -34,12 +41,10 @@ fn main() -> Result<(), Error> {
                 let s = ev.read_c_str(args[1])?;
                 last_touch.insert(ev.pid(), s);
             }
-            SyscallEnter { syscall_number: 257, args} => {
+            SyscallEnter { syscall_number: 257, args } => {
                 let s = ev.read_c_str(args[1])?;
                 last_touch.insert(ev.pid(), s);
-
             }
-            SyscallEnter { syscall_number, .. } => eprintln!("{} Unknown({:?})", ev.pid(), syscall_number),
             SyscallExit { is_error, .. } => {
                 if let Some(path) = last_touch.remove(&ev.pid()) {
                     touched.push((path, is_error, ev.pid()))
@@ -50,9 +55,7 @@ fn main() -> Result<(), Error> {
     }
 
     for (path, err, pid) in touched {
-        if !err {
-            println!("{}: {:?}\t{:?}", pid, !err, path);
-        }
+        println!("{}: {:?}  \t{:?}", pid, !err, path);
     }
 
     Ok(())
