@@ -2,11 +2,6 @@ use std::ffi::{CStr, CString};
 use std::io::ErrorKind;
 use std::process;
 
-#[allow(non_upper_case_globals)]
-#[allow(non_camel_case_types)]
-#[allow(non_snake_case)]
-mod bindings;
-
 mod raw;
 
 const MAX_FILE_PATH_LENGTH: usize = 4096;
@@ -39,7 +34,7 @@ impl TraceableCommand for std::process::Command {
 
         raw::ptrace::wait_for(pid)?;
         raw::ptrace::set_trace_syscall_option(pid)?;
-        raw::ptrace::trace_syscall(pid)?;
+        raw::ptrace::trace_syscall_with_signal_delivery(pid, 0)?;
 
         Ok(
             TraceableChild {
@@ -93,7 +88,13 @@ pub enum FingerprintEvent {
         return_val: i64,
         is_error: bool,
     },
-    SyscallUnknown(u8),
+    Event {
+        event_pid: u32,
+        ty: raw::ptrace::PtraceEventTy,
+    },
+    SignalDelivery {
+        signal: i32,
+    },
     ExitNormally(i32),
     ExitSignal(i32),
 }
@@ -103,8 +104,11 @@ impl Fingerprint {
         if self.state != TraceeState::Stopped {
             return Ok(());
         }
-
-        raw::ptrace::trace_syscall(self.pid)?;
+        let signal = match self.event {
+            FingerprintEvent::SignalDelivery { signal: singal_number } => singal_number,
+            _ => 0,
+        };
+        raw::ptrace::trace_syscall_with_signal_delivery(self.pid, signal)?;
         self.state = TraceeState::Resumed;
         Ok(())
     }
@@ -125,6 +129,10 @@ impl Fingerprint {
     pub fn event(&self) -> FingerprintEvent {
         self.event
     }
+
+    pub fn pid(&self) -> u32 {
+        self.pid as u32
+    }
 }
 
 impl Drop for Fingerprint {
@@ -137,9 +145,20 @@ impl Iterator for TraceableChild {
     type Item = Result<Fingerprint>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let pid = loop {
+        loop {
             use raw::ptrace::WaitPID::*;
             match raw::ptrace::wait_all() {
+                Ok(SysCall { pid }) => {
+                    let event = match get_syscall_event(pid) {
+                        Ok(e) => e,
+                        Err(e) => return Some(Err(e)),
+                    };
+                    return Some(Ok(Fingerprint {
+                        pid,
+                        event,
+                        state: TraceeState::Stopped,
+                    }));
+                }
                 Ok(NoChild) => return None,
                 Ok(Exited { pid, exit_status }) => return Some(Ok(Fingerprint {
                     pid,
@@ -151,27 +170,32 @@ impl Iterator for TraceableChild {
                     event: FingerprintEvent::ExitSignal(termination_signal),
                     state: TraceeState::Exited,
                 })),
-                Ok(SysCall { pid }) => break pid,
+                Ok(Signal { pid, signal }) => return Some(Ok(Fingerprint {
+                    pid,
+                    event: FingerprintEvent::SignalDelivery {
+                        signal,
+                    },
+                    state: TraceeState::Stopped,
+                })),
+                Ok(PTraceEvent { pid, other_pid, ty }) => {
+                    return Some(Ok(Fingerprint {
+                        pid,
+                        event: FingerprintEvent::Event {
+                            event_pid: other_pid as u32,
+                            ty,
+                        },
+                        state: TraceeState::Stopped,
+                    }));
+                }
                 Err(e) => return Some(Err(e)),
             };
         };
-
-        let event = match get_syscall_event(pid) {
-            Ok(e) => e,
-            Err(e) => return Some(Err(e)),
-        };
-        return Some(Ok(Fingerprint {
-            pid,
-            event,
-            state: TraceeState::Stopped,
-        }));
     }
 }
 
 
 fn get_syscall_event(pid: raw::ptrace::PTracePID) -> Result<FingerprintEvent> {
     use raw::ptrace::{PtraceSyscallInfo, PtraceSyscallEventArgs};
-
 
     unsafe {
         match raw::ptrace::get_syscall_info(pid)? {
@@ -188,8 +212,8 @@ fn get_syscall_event(pid: raw::ptrace::PTracePID) -> Result<FingerprintEvent> {
                     is_error: exit.is_error != 0,
                 })
             }
-            PtraceSyscallInfo { op: 3, .. } => Err("Got seccomp stop".into()),
-            PtraceSyscallInfo { op, .. } => Ok(FingerprintEvent::SyscallUnknown(op))
+            PtraceSyscallInfo { op: 3, .. } => Err("Got seccomp stop")?,
+            PtraceSyscallInfo { op, .. } => Err(format!("Got unknown stop {}", op))?
         }
     }
 }

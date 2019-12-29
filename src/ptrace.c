@@ -23,6 +23,8 @@ typedef struct {
   char stopped;
   char syscalled;
   char no_child;
+  int signal;
+  char event;
 } waitpid_t;
 
 waitpid_t wrapped_waitpid(pid_t pid, int options) {
@@ -37,6 +39,8 @@ waitpid_t wrapped_waitpid(pid_t pid, int options) {
       .stopped = WIFSTOPPED(status),
       .syscalled = WSTOPSIG(status) == (SIGTRAP | 0x80),
       .no_child = errno == ECHILD,
+      .signal = WSTOPSIG(status),
+      .event = status >> 16,
   };
   return ret;
 }

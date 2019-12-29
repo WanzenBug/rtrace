@@ -1,6 +1,6 @@
 pub mod ptrace {
     use std::{
-        io::{Error as OSError},
+        io::Error as OSError,
         os::{
             raw::{
                 c_char,
@@ -25,6 +25,8 @@ pub mod ptrace {
         is_stopped: c_char,
         stopped_by_syscall: c_char,
         is_error_no_child: c_char,
+        signal: c_int,
+        event: c_char,
     }
 
     #[repr(C)]
@@ -65,6 +67,13 @@ pub mod ptrace {
         pub event_args: PtraceSyscallEventArgs,
     }
 
+    #[derive(Debug, Copy, Clone)]
+    pub enum PtraceEventTy {
+        Fork,
+        VFork,
+        Clone,
+        Exec,
+    }
 
     #[derive(Debug)]
     pub enum WaitPID {
@@ -79,6 +88,15 @@ pub mod ptrace {
         },
         SysCall {
             pid: PTracePID,
+        },
+        PTraceEvent {
+            pid: PTracePID,
+            other_pid: PTracePID,
+            ty: PtraceEventTy,
+        },
+        Signal {
+            pid: PTracePID,
+            signal: i32,
         },
     }
 
@@ -101,36 +119,45 @@ pub mod ptrace {
     const PTRACE_TRACEME: PTraceRequest = 0;
     const PTRACE_SYSCALL: PTraceRequest = 24;
     const PTRACE_SETOPTIONS: PTraceRequest = 16896;
+    const PTRACE_GETEVENTMSG: PTraceRequest = 0x4201;
     const PTRACE_DETACH: PTraceRequest = 17;
-    const PTRACE_O_TRACESYSGOOD: PTraceOptionFlag = 1;
+
+    const PTRACE_O_TRACESYSGOOD: PTraceOptionFlag = 0x00000001;
+    const PTRACE_O_TRACEFORK: PTraceOptionFlag = 0x00000002;
+    const PTRACE_O_TRACEVFORK: PTraceOptionFlag = 0x00000004;
+    const PTRACE_O_TRACECLONE: PTraceOptionFlag = 0x00000008;
+    const PTRACE_O_TRACEEXEC: PTraceOptionFlag = 0x00000010;
     const WAITPID_WAITALL: c_int = 0x40000000;
 
-    pub fn trace_me() -> crate::Result<()> {
-        let ret = unsafe {
-            wrapped_fixed_arg_ptrace(PTRACE_TRACEME, 0, null_mut(), null_mut())
-        };
-
-        if ret == -1 {
-            Err(OSError::last_os_error().into())
-        } else {
-            Ok(())
+    fn ptrace_to_result(res: c_long) -> crate::Result<()> {
+        match res {
+            -1 => Err(OSError::last_os_error().into()),
+            _ => Ok(())
         }
     }
 
-    pub fn trace_syscall(pid: PTracePID) -> crate::Result<()> {
-        let ret = unsafe {
-            wrapped_fixed_arg_ptrace(PTRACE_SYSCALL, pid, null_mut(), null_mut())
-        };
+    pub fn trace_me() -> crate::Result<()> {
+        unsafe {
+            ptrace_to_result(
+                wrapped_fixed_arg_ptrace(PTRACE_TRACEME, 0, null_mut(), null_mut())
+            )
+        }
+    }
 
-        if ret == -1 {
-            Err(OSError::last_os_error().into())
-        } else {
-            Ok(())
+    pub fn trace_syscall_with_signal_delivery(pid: PTracePID, signal: i32) -> crate::Result<()> {
+        unsafe {
+            ptrace_to_result(
+                wrapped_fixed_arg_ptrace(PTRACE_SYSCALL, pid, null_mut(), signal as *mut c_void)
+            )
         }
     }
 
     pub fn set_trace_syscall_option(pid: PTracePID) -> crate::Result<()> {
-        let options = PTRACE_O_TRACESYSGOOD;
+        let options = PTRACE_O_TRACESYSGOOD
+            | PTRACE_O_TRACECLONE
+            | PTRACE_O_TRACEVFORK
+            | PTRACE_O_TRACEFORK
+            | PTRACE_O_TRACEEXEC;
 
         let ret = unsafe {
             wrapped_fixed_arg_ptrace(PTRACE_SETOPTIONS, pid, null_mut(), options as *mut c_void)
@@ -186,7 +213,7 @@ pub mod ptrace {
                 pid,
                 dest.as_mut_ptr() as *mut c_char,
                 dest.len().try_into()?,
-                source as *mut c_void
+                source as *mut c_void,
             )
         };
 
@@ -198,21 +225,50 @@ pub mod ptrace {
     }
 
 
+    fn get_event_msg(pid: PTracePID) -> crate::Result<u64> {
+        let mut res = 0;
+        let ret = unsafe { wrapped_fixed_arg_ptrace(PTRACE_GETEVENTMSG, pid, null_mut(), &mut res as *mut u64 as *mut c_void) };
+        if ret == -1 {
+            Err(OSError::last_os_error().into())
+        } else {
+            Ok(res)
+        }
+    }
+
     impl From<RawWaitPID> for crate::Result<WaitPID> {
         fn from(raw: RawWaitPID) -> Self {
             match raw {
                 RawWaitPID { pid: -1, is_error_no_child: 1, .. } => Ok(WaitPID::NoChild),
                 RawWaitPID { pid: -1, .. } => Err(OSError::last_os_error())?,
-                RawWaitPID { is_stopped: 0, pid, .. } => Err(format!("Process {} not stopped in waitpid()", pid))?,
                 RawWaitPID { exited: 1, pid, exit_status, .. } => Ok(WaitPID::Exited {
                     pid,
                     exit_status,
                 }),
+                x @ RawWaitPID { is_stopped: 0, .. } => Err(format!("Process {} not stopped in waitpid(): {:#?}", x.pid, x))?,
                 RawWaitPID { terminated_by_signal: 1, pid, termination_signal, .. } => Ok(WaitPID::Terminated {
                     pid,
                     termination_signal,
                 }),
-                RawWaitPID { pid, .. } => Ok(WaitPID::SysCall { pid }),
+                RawWaitPID { stopped_by_syscall: 1, pid, .. } => Ok(WaitPID::SysCall { pid }),
+                RawWaitPID { pid, event, signal, .. } if event > 0 => {
+                    let other_pid = get_event_msg(pid)? as PTracePID;
+                    let ty = match event {
+                        0 => return Ok(WaitPID::Signal { pid, signal }),
+                        1 => PtraceEventTy::Fork,
+                        2 => PtraceEventTy::VFork,
+                        3 => PtraceEventTy::Clone,
+                        4 => PtraceEventTy::Exec,
+                        _ => Err(format!("Could not decode event {} of process {}", event, pid))?,
+                    };
+                    Ok(WaitPID::PTraceEvent {
+                        pid,
+                        other_pid,
+                        ty,
+                    })
+                }
+                RawWaitPID { pid, signal, .. } => {
+                    Ok(WaitPID::Signal { pid, signal })
+                }
             }
         }
     }
