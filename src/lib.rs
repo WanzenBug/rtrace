@@ -1,13 +1,15 @@
-use std::ffi::{CStr, CString};
-use std::io::ErrorKind;
-use std::process;
+use std::{
+    ffi::{OsStr, OsString},
+    io::ErrorKind,
+    process,
+};
 
 mod raw;
 
 const MAX_FILE_PATH_LENGTH: usize = 4096;
 
-pub(crate) type Error = Box<dyn std::error::Error + 'static>;
-pub(crate) type Result<T> = std::result::Result<T, Error>;
+pub type Error = Box<dyn std::error::Error + 'static>;
+pub type Result<T> = std::result::Result<T, Error>;
 
 #[must_use = "Traced child process cannot will not continue with monitoring"]
 #[derive(Debug)]
@@ -113,7 +115,7 @@ impl Fingerprint {
         Ok(())
     }
 
-    pub fn read_c_str(&mut self, base_address: u64) -> Result<CString> {
+    pub fn read_os_string(&mut self, base_address: u64) -> Result<OsString> {
         if self.state != TraceeState::Stopped {
             Err(std::io::Error::from(ErrorKind::PermissionDenied))?;
         }
@@ -122,8 +124,9 @@ impl Fingerprint {
         let first_null = buf[..].iter()
             .position(|&x| x == b'\0')
             .ok_or_else(|| format!("Could not find CString in process {} at address {:x}", self.pid, base_address))?;
-        let string = CString::from(CStr::from_bytes_with_nul(&buf[..first_null + 1])?);
-        Ok(string)
+
+        use std::os::unix::ffi::OsStrExt;
+        Ok(OsStr::from_bytes(&buf[..first_null]).to_os_string())
     }
 
     pub fn event(&self) -> FingerprintEvent {
