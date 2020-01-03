@@ -1,360 +1,115 @@
-use std::{
-    collections::HashMap,
-    env::args_os,
-    mem,
-    path::PathBuf,
-    process::Command,
-};
+use std::collections::HashMap;
+use std::env::args_os;
+use std::fs::File;
+use std::io::{copy, ErrorKind};
+use std::os::unix::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
-use dry::{Fingerprint, FingerprintEvent, TraceableCommand};
+use serde::Deserialize;
+use serde::Serialize;
+use sha2::Digest;
+use sha2::Sha256;
+
+use dry::FingerprintEvent;
+use dry::paths::SyscallsWithPathArgs;
+use dry::TraceableCommand;
 
 type Error = Box<dyn std::error::Error + 'static>;
 
-#[derive(Debug)]
-enum SyscallsWithPathArgs {
-    Open(PathBuf),
-    Stat(PathBuf),
-    LStat(PathBuf),
-    Access(PathBuf),
-    Execve(PathBuf),
-    Truncate(PathBuf),
-    Chdir(PathBuf),
-    Rename(PathBuf, PathBuf),
-    Mkdir(PathBuf),
-    Rmdir(PathBuf),
-    Creat(PathBuf),
-    Link(PathBuf, PathBuf),
-    Unlink(PathBuf),
-    Symlink(PathBuf, PathBuf),
-    ReadLink(PathBuf),
-    Chmod(PathBuf),
-    Chown(PathBuf),
-    LChown(PathBuf),
-    Statfs(PathBuf),
-    PivotRoot(PathBuf),
-    Chroot(PathBuf),
-    SetXAttr(PathBuf),
-    LSetXAttr(PathBuf),
-    GetXAttr(PathBuf),
-    LGetXAttr(PathBuf),
-    ListXAttr(PathBuf),
-    LListXAttr(PathBuf),
-    RemoveXAttr(PathBuf),
-    LRemoveXAttr(PathBuf),
-    UTimes(PathBuf),
-    INotifyAddWatch(PathBuf),
-    OpenAt(PathBuf),
-    MkdirAt(PathBuf),
-    MkNodAt(PathBuf),
-    FChownAt(PathBuf),
-    FUTimesAt(PathBuf),
-    NewFStatAt(PathBuf),
-    UnlinkAt(PathBuf),
-    RenameAt(PathBuf, PathBuf),
-    LinkAt(PathBuf, PathBuf),
-    SymlinkAt(PathBuf, PathBuf),
-    ReadLinkAt(PathBuf),
-    FChmodAt(PathBuf),
-    FAccessAt(PathBuf),
-    UTimeNSAt(PathBuf),
-    NameToHandleAt(PathBuf),
-    RenameAt2(PathBuf, PathBuf),
-    ExecveAt(PathBuf),
+#[derive(Debug, Serialize, Deserialize)]
+enum FsInfoData {
+    NotFound,
+    PermissionDenied,
+    Meta,
+    File {
+        modified_time: SystemTime,
+        size: u64,
+    },
+    Directory {
+        modified_time: SystemTime,
+        number_entries: u64,
+    },
 }
 
 
-impl SyscallsWithPathArgs {
-    pub fn from_fingerprint(ev: &mut Fingerprint) -> dry::Result<Option<Self>> {
-        use FingerprintEvent::*;
-        let (syscall_number, args) = match ev.event() {
-            SyscallEnter { syscall_number, args } => (syscall_number, args),
-            _ => return Ok(None),
-        };
+#[derive(Debug, Serialize, Deserialize)]
+struct FsInfo {
+    data: FsInfoData,
+    #[serde(with = "dry::util::serde_hex")]
+    checksum: Vec<u8>,
+    success: bool,
+}
 
-        use SyscallsWithPathArgs::*;
-        let res = match syscall_number {
-            2 => {
-                let s = ev.read_os_string(args[0])?;
-                Open(s.into())
+impl FsInfo {
+    pub fn collect<A>(path: A) -> Result<Self, crate::Error> where A: AsRef<Path> {
+        match std::fs::metadata(path.as_ref()) {
+            Ok(ref m) if m.is_file() => {
+                let mut hash = Sha256::new();
+                let mut file = File::open(path.as_ref())?;
+                copy(&mut file, &mut hash)?;
+
+                Ok(FsInfo {
+                    data: FsInfoData::File {
+                        modified_time: m.modified()?,
+                        size: m.len(),
+                    },
+                    checksum: hash.result().to_vec(),
+                    success: true,
+                })
             }
-            4 => {
-                let s = ev.read_os_string(args[0])?;
-                Stat(s.into())
+            Ok(ref m) if m.is_dir() => {
+                let entries: Result<Vec<_>, _> = std::fs::read_dir(path.as_ref())?.collect();
+                let mut entries = entries?;
+                entries.sort_by_key(|e| e.file_name());
+                let mut hash = Sha256::new();
+                for p in entries.iter() {
+                    hash.input(p.file_name().as_os_str().as_bytes());
+                    // TODO: Add filetype to hash
+                }
+
+                Ok(FsInfo {
+                    data: FsInfoData::Directory {
+                        modified_time: m.modified()?,
+                        number_entries: entries.len() as u64,
+                    },
+                    checksum: hash.result().to_vec(),
+                    success: true,
+                })
             }
-            6 => {
-                let s = ev.read_os_string(args[0])?;
-                LStat(s.into())
+            Ok(_) => {
+                Ok(FsInfo {
+                    data: FsInfoData::Meta,
+                    checksum: vec![2; 32],
+                    success: true,
+                })
             }
-            21 => {
-                let s = ev.read_os_string(args[0])?;
-                Access(s.into())
-            }
-            59 => {
-                let s = ev.read_os_string(args[0])?;
-                Execve(s.into())
-            }
-            76 => {
-                let s = ev.read_os_string(args[0])?;
-                Truncate(s.into())
-            }
-            80 => {
-                let s = ev.read_os_string(args[0])?;
-                Chdir(s.into())
-            }
-            82 => {
-                let a = ev.read_os_string(args[0])?;
-                let b = ev.read_os_string(args[1])?;
-                Rename(a.into(), b.into())
-            }
-            83 => {
-                let s = ev.read_os_string(args[0])?;
-                Mkdir(s.into())
-            }
-            84 => {
-                let s = ev.read_os_string(args[0])?;
-                Rmdir(s.into())
-            }
-            85 => {
-                let s = ev.read_os_string(args[0])?;
-                Creat(s.into())
-            }
-            86 => {
-                let a = ev.read_os_string(args[0])?;
-                let b = ev.read_os_string(args[1])?;
-                Link(a.into(), b.into())
-            }
-            87 => {
-                let s = ev.read_os_string(args[0])?;
-                Unlink(s.into())
-            }
-            88 => {
-                let a = ev.read_os_string(args[0])?;
-                let b = ev.read_os_string(args[1])?;
-                Symlink(a.into(), b.into())
-            }
-            89 => {
-                let s = ev.read_os_string(args[0])?;
-                ReadLink(s.into())
-            }
-            90 => {
-                let s = ev.read_os_string(args[0])?;
-                Chmod(s.into())
-            }
-            92 => {
-                let s = ev.read_os_string(args[0])?;
-                Chown(s.into())
-            }
-            94 => {
-                let s = ev.read_os_string(args[0])?;
-                LChown(s.into())
-            }
-            137 => {
-                let s = ev.read_os_string(args[0])?;
-                Statfs(s.into())
-            }
-            155 => {
-                let s = ev.read_os_string(args[0])?;
-                PivotRoot(s.into())
-            }
-            161 => {
-                let s = ev.read_os_string(args[0])?;
-                Chroot(s.into())
-            }
-            188 => {
-                let s = ev.read_os_string(args[0])?;
-                SetXAttr(s.into())
-            }
-            189 => {
-                let s = ev.read_os_string(args[0])?;
-                LSetXAttr(s.into())
-            }
-            191 => {
-                let s = ev.read_os_string(args[0])?;
-                GetXAttr(s.into())
-            }
-            192 => {
-                let s = ev.read_os_string(args[0])?;
-                LGetXAttr(s.into())
-            }
-            194 => {
-                let s = ev.read_os_string(args[0])?;
-                ListXAttr(s.into())
-            }
-            195 => {
-                let s = ev.read_os_string(args[0])?;
-                LListXAttr(s.into())
-            }
-            197 => {
-                let s = ev.read_os_string(args[0])?;
-                RemoveXAttr(s.into())
-            }
-            198 => {
-                let s = ev.read_os_string(args[0])?;
-                LRemoveXAttr(s.into())
-            }
-            235 => {
-                let s = ev.read_os_string(args[0])?;
-                UTimes(s.into())
-            }
-            254 => {
-                let s = ev.read_os_string(args[1])?;
-                INotifyAddWatch(s.into())
-            }
-            257 => {
-                let s = ev.read_os_string(args[1])?;
-                OpenAt(s.into())
-            }
-            258 => {
-                let s = ev.read_os_string(args[1])?;
-                MkdirAt(s.into())
-            }
-            259 => {
-                let s = ev.read_os_string(args[1])?;
-                MkNodAt(s.into())
-            }
-            260 => {
-                let s = ev.read_os_string(args[1])?;
-                FChownAt(s.into())
-            }
-            261 => {
-                let s = ev.read_os_string(args[1])?;
-                FUTimesAt(s.into())
-            }
-            262 => {
-                let s = ev.read_os_string(args[1])?;
-                NewFStatAt(s.into())
-            }
-            263 => {
-                let s = ev.read_os_string(args[1])?;
-                UnlinkAt(s.into())
-            }
-            264 => {
-                let a = ev.read_os_string(args[1])?;
-                let b = ev.read_os_string(args[3])?;
-                RenameAt(a.into(), b.into())
-            }
-            265 => {
-                let a = ev.read_os_string(args[1])?;
-                let b = ev.read_os_string(args[3])?;
-                LinkAt(a.into(), b.into())
-            }
-            266 => {
-                let a = ev.read_os_string(args[0])?;
-                let b = ev.read_os_string(args[2])?;
-                SymlinkAt(a.into(), b.into())
-            }
-            267 => {
-                let s = ev.read_os_string(args[1])?;
-                ReadLinkAt(s.into())
-            }
-            268 => {
-                let s = ev.read_os_string(args[1])?;
-                FChmodAt(s.into())
-            }
-            269 => {
-                let s = ev.read_os_string(args[1])?;
-                FAccessAt(s.into())
-            }
-            280 => {
-                let s = ev.read_os_string(args[1])?;
-                UTimeNSAt(s.into())
-            }
-            303 => {
-                let s = ev.read_os_string(args[1])?;
-                NameToHandleAt(s.into())
-            }
-            316 => {
-                let a = ev.read_os_string(args[1])?;
-                let b = ev.read_os_string(args[3])?;
-                RenameAt2(a.into(), b.into())
-            }
-            322 => {
-                let s = ev.read_os_string(args[1])?;
-                ExecveAt(s.into())
-            }
-            _ => return Ok(None),
-        };
-        Ok(Some(res))
+            Err(ref e) if e.kind() == ErrorKind::PermissionDenied => Ok(FsInfo {
+                data: FsInfoData::PermissionDenied,
+                checksum: vec![0; 32],
+                success: false,
+            }),
+            Err(ref e) if e.kind() == ErrorKind::NotFound => Ok(FsInfo {
+                data: FsInfoData::NotFound,
+                checksum: vec![1; 32],
+                success: false,
+            }),
+            Err(e) => Err(e)?
+        }
     }
 }
 
-enum TupleIterator<T> {
-    Empty,
-    One(T),
-    Two(T, T),
-}
-
-impl<T> Iterator for TupleIterator<T> {
-    type Item = T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        use TupleIterator::*;
-        let cur = mem::replace(self, Empty);
-        let (retval, newval) = match cur {
-            Two(a, b) => (Some(a), One(b)),
-            One(a) => (Some(a), Empty),
-            Empty => (None, Empty),
-        };
-        *self = newval;
-        retval
-    }
-}
-
-impl IntoIterator for SyscallsWithPathArgs {
-    type Item = PathBuf;
-    type IntoIter = TupleIterator<PathBuf>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        use SyscallsWithPathArgs::*;
-        match self {
-            Open(a)
-            | Stat(a)
-            | LStat(a)
-            | Access(a)
-            | Execve(a)
-            | Truncate(a)
-            | Chdir(a)
-            | Mkdir(a)
-            | Rmdir(a)
-            | Creat(a)
-            | Unlink(a)
-            | ReadLink(a)
-            | Chmod(a)
-            | Chown(a)
-            | LChown(a)
-            | Statfs(a)
-            | PivotRoot(a)
-            | Chroot(a)
-            | SetXAttr(a)
-            | LSetXAttr(a)
-            | GetXAttr(a)
-            | LGetXAttr(a)
-            | ListXAttr(a)
-            | LListXAttr(a)
-            | RemoveXAttr(a)
-            | LRemoveXAttr(a)
-            | UTimes(a)
-            | INotifyAddWatch(a)
-            | OpenAt(a)
-            | MkdirAt(a)
-            | MkNodAt(a)
-            | FChownAt(a)
-            | FUTimesAt(a)
-            | NewFStatAt(a)
-            | UnlinkAt(a)
-            | ReadLinkAt(a)
-            | FChmodAt(a)
-            | FAccessAt(a)
-            | UTimeNSAt(a)
-            | NameToHandleAt(a)
-            | ExecveAt(a) => TupleIterator::One(a),
-            Link(a, b)
-            | Rename(a, b)
-            | Symlink(a, b)
-            | RenameAt2(a, b)
-            | SymlinkAt(a, b)
-            | LinkAt(a, b)
-            | RenameAt(a, b) => TupleIterator::Two(a, b),
+impl PartialEq for FsInfo {
+    fn eq(&self, other: &Self) -> bool {
+        use FsInfoData::*;
+        match (&self.data, &other.data) {
+            (PermissionDenied, PermissionDenied) => true,
+            (NotFound, NotFound) => true,
+            (File { .. }, File { .. }) => self.checksum == other.checksum,
+            (Directory { .. }, Directory { .. }) => self.checksum == other.checksum,
+            _ => false,
         }
     }
 }
@@ -367,12 +122,61 @@ fn main() -> Result<(), Error> {
         None => return Err("Need to specify a program to run".into()),
     };
 
-    let trace = Command::new(prog)
-        .args(args)
-        .spawn_traced()?;
+    let mut hasher = sha2::Sha256::new().chain(prog.as_bytes());
+    let mut trace = Command::new(prog);
+    for a in args {
+        hasher.input(a.as_bytes());
+        trace.arg(a);
+    }
+    let digest = hasher.result();
+    let hexdigest = hex::encode(digest);
+    let cache_path = Path::new(&hexdigest);
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
-    let mut touched = Vec::new();
-    let mut last_touch = HashMap::<u32, TupleIterator<PathBuf>>::new();
+    if cache_path.exists() {
+        for entry in std::fs::read_dir(cache_path)? {
+            let entry = match entry {
+                Ok(x) => x,
+                Err(_) => continue,
+            };
+            match entry.file_type() {
+                Ok(x) if x.is_file() => (),
+                _ => continue,
+            };
+            let path = entry.path();
+            eprintln!("Trying cache entry: {:?}", path);
+            let file = File::open(path)?;
+            let map: HashMap<PathBuf, FsInfo> = serde_json::from_reader(file)?;
+            let mut entry_matching = true;
+            for (k, cache_info) in map {
+                let current_into = match FsInfo::collect(&k) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        entry_matching = false;
+                        eprintln!("Could not collect info on: {:?} - {}", k, e);
+                        continue;
+                    }
+                };
+
+                if current_into != cache_info {
+                    entry_matching = false;
+                    eprintln!("Cache entry not up to date: {:?} - {:?} != {:?}", k, current_into, cache_info);
+                }
+            }
+
+            if entry_matching {
+                eprintln!("Cache entry matches, skipping...");
+                return Ok(());
+            }
+        }
+    }
+
+
+    let trace = trace.spawn_traced()?;
+
+    let mut last_touch = HashMap::<u32, _>::new();
+    let mut paths_touched = HashMap::new();
+
     for ev in trace {
         let mut ev = ev?;
 
@@ -380,16 +184,26 @@ fn main() -> Result<(), Error> {
         match ev.event() {
             SyscallEnter { .. } => {
                 let paths = match SyscallsWithPathArgs::from_fingerprint(&mut ev)? {
-                    Some(x) => x,
+                    Some(x) => x.into_iter(),
                     None => continue,
                 };
-                eprintln!("paths = {:#?}", paths);
-                last_touch.insert(ev.pid(), paths.into_iter());
+                for p in paths.clone() {
+                    use std::collections::hash_map::Entry;
+                    match paths_touched.entry(p) {
+                        Entry::Vacant(v) => {
+                            let info = FsInfo::collect(v.key())?;
+                            v.insert(info);
+                        }
+                        Entry::Occupied(_) => (),
+                    }
+                }
+                last_touch.insert(ev.pid(), paths);
             }
             SyscallExit { is_error, .. } => {
                 if let Some(path) = last_touch.remove(&ev.pid()) {
                     for p in path {
-                        touched.push((p, is_error, ev.pid()))
+                        paths_touched.get_mut(&p).expect("Paths inserted recently")
+                            .success = !is_error;
                     }
                 }
             }
@@ -397,9 +211,21 @@ fn main() -> Result<(), Error> {
         }
     }
 
-    for (path, err, pid) in touched {
-        println!("{}: {:?}  \t{:?}", pid, !err, path);
-    }
+    std::fs::create_dir_all(cache_path)?;
+    let mut fallback = 0;
+    let f = loop {
+        let p = cache_path.join(format!("{}-{}.entry", now, fallback));
+        fallback = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(p) {
+            Ok(f) => break f,
+            Err(_) if fallback < 100 => fallback + 1,
+            Err(x) => Err(x)?
+        }
+    };
+
+    serde_json::to_writer(f, &paths_touched)?;
 
     Ok(())
 }

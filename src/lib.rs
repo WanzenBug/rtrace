@@ -4,6 +4,9 @@ use std::{
     process,
 };
 
+pub mod paths;
+pub mod util;
+
 mod raw;
 
 const MAX_FILE_PATH_LENGTH: usize = 4096;

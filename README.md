@@ -34,18 +34,24 @@ Things the are considered input:
 
 
 ## Demo
-Current status is only a proof-of-concept of the `ptrace` API. It will report any file opened by syscalls
-of the command or any of its children. It will also indicate if the open call was successful or not.
+Current proof of concept just checks that all files referenced in syscalls are as they were when first introduced.
+```
+$ cargo run --release -- python3 -c "2 + 2"
+    Finished release [optimized] target(s) in 0.02s
+     Running `target/release/dry python3 -c '2 + 2'`
 
+Process finished with exit code 0
 ```
-$ cargo run -- python -c "import re"
-...
-22151: true  	"/usr/lib64/python2.7/sysconfig.pyc"
-22151: false  	"/usr/lib64/python2.7/re.so"
-22151: false  	"/usr/lib64/python2.7/remodule.so"
-22151: true  	"/usr/lib64/python2.7/re.py"
-22151: true  	"/usr/lib64/python2.7/re.pyc"
-22151: false  	"/usr/lib64/python2.7/sre_compile.so"
-22151: false  	"/usr/lib64/python2.7/sre_compilemodule.so"
-...
+
+On the second run:
 ```
+cargo run --color=always --release -- python3 -c "2 + 2"
+    Finished release [optimized] target(s) in 3.27s
+     Running `target/release/dry python3 -c '2 + 2'`
+Trying cache entry: "2bbf95ed128e93eff66451cfc6efcdf46fdb401edf25106f8c4afea30df6eaf7/1578065473-0.entry"
+Cache entry matches, skipping...
+
+Process finished with exit code 0
+```
+
+Cache entry are current just written to the working directory.
