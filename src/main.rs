@@ -97,6 +97,16 @@ fn main() -> Result<(), Error> {
     }
 
 
+    let current_paths: HashMap<_, _> = paths_touched.into_iter()
+        .filter(|(k, v)| {
+            if v.equals_path(k) {
+                true
+            } else {
+                eprintln!("Path {} looks like an output", k.display());
+                false
+            }
+        })
+        .collect();
 
     std::fs::create_dir_all(cache_path)?;
     let mut fallback = 0;
@@ -112,7 +122,7 @@ fn main() -> Result<(), Error> {
         }
     };
 
-    serde_json::to_writer(f, &paths_touched)?;
+    serde_json::to_writer(f, &current_paths)?;
 
     Ok(())
 }
