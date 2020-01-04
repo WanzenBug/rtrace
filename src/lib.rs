@@ -4,6 +4,7 @@ use std::{
     process,
 };
 
+pub mod fs;
 pub mod paths;
 pub mod util;
 
