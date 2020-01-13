@@ -18,54 +18,47 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[must_use = "Traced child process cannot will not continue with monitoring"]
 #[derive(Debug)]
 pub struct TraceableChild {
-    handle: process::Child,
+    handle: (),
 }
 
 pub trait TraceableCommand {
-    fn spawn_traced(&mut self) -> Result<TraceableChild>;
+    fn spawn_traced(self) -> Result<TraceableChild>;
 }
 
-impl TraceableCommand for std::process::Command {
-    fn spawn_traced(&mut self) -> Result<TraceableChild> {
+impl TraceableCommand for process::Command {
+    fn spawn_traced(mut self) -> Result<TraceableChild> {
         use std::os::unix::process::CommandExt;
+        use std::sync::Barrier;
+        use std::sync::Arc;
 
-        let cmd = unsafe {
-            self.pre_exec(|| {
+        let barrier = Arc::new(Barrier::new(2));
+        let barrier_clone = barrier.clone();
+        unsafe {
+            self.pre_exec(move || {
                 raw::ptrace::trace_me().expect("trace_me() cannot fail");
+                barrier_clone.wait();
+                raw::stop_self().expect("stop_self() cannot fail");
                 Ok(())
             })
         };
-        let child = cmd.spawn()?;
-        let pid = child.id() as raw::ptrace::PTracePID;
-
-        raw::ptrace::wait_for(pid)?;
+        std::thread::spawn(move || {
+            self.exec()
+        });
+        barrier.wait();
+        let wait = raw::ptrace::wait_for(-1)?;
+        let pid = match wait {
+            // SIGSTOP == 19 (on x86_64)
+            raw::ptrace::WaitPID::Signal { pid, signal: 19 } => pid,
+            x => Err(format!("Expected SIGSTOP in child process, got {:?} instead", x))?,
+        };
         raw::ptrace::set_trace_syscall_option(pid)?;
         raw::ptrace::trace_syscall_with_signal_delivery(pid, 0)?;
 
         Ok(
             TraceableChild {
-                handle: child,
+                handle: (),
             }
         )
-    }
-}
-
-impl TraceableChild {
-    pub fn detach(self) -> Result<process::Child> {
-        raw::ptrace::detach(self.handle.id() as raw::ptrace::PTracePID)?;
-        Ok(self.handle)
-    }
-
-    pub fn stdin(&mut self) -> Option<&mut process::ChildStdin> {
-        self.handle.stdin.as_mut()
-    }
-
-    pub fn stdout(&mut self) -> Option<&mut process::ChildStdout> {
-        self.handle.stdout.as_mut()
-    }
-
-    pub fn stderr(&mut self) -> Option<&mut process::ChildStderr> {
-        self.handle.stderr.as_mut()
     }
 }
 
@@ -111,7 +104,7 @@ impl Fingerprint {
             return Ok(());
         }
         let signal = match self.event {
-            FingerprintEvent::SignalDelivery { signal: singal_number } => singal_number,
+            FingerprintEvent::SignalDelivery { signal } => signal,
             _ => 0,
         };
         raw::ptrace::trace_syscall_with_signal_delivery(self.pid, signal)?;

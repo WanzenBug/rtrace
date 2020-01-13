@@ -1,6 +1,24 @@
+use std::io::Error as OSError;
+use std::os::raw::c_int;
+
+extern "C" {
+    fn wrapped_stop_self() -> c_int;
+}
+
+pub fn stop_self() -> crate::Result<()> {
+    let ret = unsafe {
+        wrapped_stop_self()
+    };
+
+    if ret == -1 {
+        Err(OSError::last_os_error())?
+    }
+
+    Ok(())
+}
+
 pub mod ptrace {
     use std::{
-        io::Error as OSError,
         os::{
             raw::{
                 c_char,
@@ -13,6 +31,8 @@ pub mod ptrace {
     };
     use std::convert::TryInto;
     use std::mem::MaybeUninit;
+
+    use super::OSError;
 
     #[repr(C)]
     #[derive(Debug)]
@@ -120,7 +140,7 @@ pub mod ptrace {
     const PTRACE_SYSCALL: PTraceRequest = 24;
     const PTRACE_SETOPTIONS: PTraceRequest = 16896;
     const PTRACE_GETEVENTMSG: PTraceRequest = 0x4201;
-    const PTRACE_DETACH: PTraceRequest = 17;
+    const PTRACE_GETSYSCALLINFO: PTraceRequest = 0x420e;
 
     const PTRACE_O_TRACESYSGOOD: PTraceOptionFlag = 0x00000001;
     const PTRACE_O_TRACEFORK: PTraceOptionFlag = 0x00000002;
@@ -170,18 +190,6 @@ pub mod ptrace {
         }
     }
 
-    pub fn detach(pid: PTracePID) -> crate::Result<()> {
-        let ret = unsafe {
-            wrapped_fixed_arg_ptrace(PTRACE_DETACH, pid, null_mut(), null_mut())
-        };
-
-        if ret == -1 {
-            Err(OSError::last_os_error().into())
-        } else {
-            Ok(())
-        }
-    }
-
     pub fn wait_all() -> crate::Result<WaitPID> {
         unsafe {
             wrapped_waitpid(-1, WAITPID_WAITALL)
@@ -198,7 +206,7 @@ pub mod ptrace {
         let mut info = MaybeUninit::<PtraceSyscallInfo>::uninit();
         let size = std::mem::size_of_val(&info);
         let ret = unsafe {
-            wrapped_fixed_arg_ptrace(0x420e, pid, size as *mut c_void, info.as_mut_ptr() as *mut c_void)
+            wrapped_fixed_arg_ptrace(PTRACE_GETSYSCALLINFO, pid, size as *mut c_void, info.as_mut_ptr() as *mut c_void)
         };
         if ret == -1 {
             Err(OSError::last_os_error().into())
