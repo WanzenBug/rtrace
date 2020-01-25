@@ -1,7 +1,7 @@
-use std::path::PathBuf;
+use crate::util::TupleIterator;
 use crate::Fingerprint;
 use crate::FingerprintEvent;
-use crate::util::TupleIterator;
+use std::path::PathBuf;
 
 #[derive(Debug)]
 pub enum SyscallsWithPathArgs {
@@ -59,7 +59,10 @@ impl SyscallsWithPathArgs {
     pub fn from_fingerprint(ev: &mut Fingerprint) -> crate::Result<Option<Self>> {
         use FingerprintEvent::*;
         let (syscall_number, args) = match ev.event() {
-            SyscallEnter { syscall_number, args } => (syscall_number, args),
+            SyscallEnter {
+                syscall_number,
+                args,
+            } => (syscall_number, args),
             _ => return Ok(None),
         };
 
@@ -278,46 +281,13 @@ impl IntoIterator for SyscallsWithPathArgs {
     fn into_iter(self) -> Self::IntoIter {
         use SyscallsWithPathArgs::*;
         match self {
-            Open(a)
-            | Stat(a)
-            | LStat(a)
-            | Access(a)
-            | Execve(a)
-            | Truncate(a)
-            | Chdir(a)
-            | Mkdir(a)
-            | Rmdir(a)
-            | Creat(a)
-            | Unlink(a)
-            | ReadLink(a)
-            | Chmod(a)
-            | Chown(a)
-            | LChown(a)
-            | Statfs(a)
-            | PivotRoot(a)
-            | Chroot(a)
-            | SetXAttr(a)
-            | LSetXAttr(a)
-            | GetXAttr(a)
-            | LGetXAttr(a)
-            | ListXAttr(a)
-            | LListXAttr(a)
-            | RemoveXAttr(a)
-            | LRemoveXAttr(a)
-            | UTimes(a)
-            | INotifyAddWatch(a)
-            | OpenAt(a)
-            | MkdirAt(a)
-            | MkNodAt(a)
-            | FChownAt(a)
-            | FUTimesAt(a)
-            | NewFStatAt(a)
-            | UnlinkAt(a)
-            | ReadLinkAt(a)
-            | FChmodAt(a)
-            | FAccessAt(a)
-            | UTimeNSAt(a)
-            | NameToHandleAt(a)
+            Open(a) | Stat(a) | LStat(a) | Access(a) | Execve(a) | Truncate(a) | Chdir(a)
+            | Mkdir(a) | Rmdir(a) | Creat(a) | Unlink(a) | ReadLink(a) | Chmod(a) | Chown(a)
+            | LChown(a) | Statfs(a) | PivotRoot(a) | Chroot(a) | SetXAttr(a) | LSetXAttr(a)
+            | GetXAttr(a) | LGetXAttr(a) | ListXAttr(a) | LListXAttr(a) | RemoveXAttr(a)
+            | LRemoveXAttr(a) | UTimes(a) | INotifyAddWatch(a) | OpenAt(a) | MkdirAt(a)
+            | MkNodAt(a) | FChownAt(a) | FUTimesAt(a) | NewFStatAt(a) | UnlinkAt(a)
+            | ReadLinkAt(a) | FChmodAt(a) | FAccessAt(a) | UTimeNSAt(a) | NameToHandleAt(a)
             | ExecveAt(a) => TupleIterator::One(a),
             Link(a, b)
             | Rename(a, b)

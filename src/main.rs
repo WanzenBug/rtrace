@@ -11,9 +11,9 @@ use std::time::UNIX_EPOCH;
 use sha2::Digest;
 use sha2::Sha256;
 
-use dry::FingerprintEvent;
 use dry::fs::FsFingerprint;
 use dry::paths::SyscallsWithPathArgs;
+use dry::FingerprintEvent;
 use dry::TraceableCommand;
 
 type Error = Box<dyn std::error::Error + 'static>;
@@ -66,7 +66,6 @@ fn main() -> Result<(), Error> {
         }
     }
 
-
     let trace = trace.spawn_traced()?;
 
     let mut paths_touched = HashMap::new();
@@ -81,6 +80,7 @@ fn main() -> Result<(), Error> {
                     Some(x) => x.into_iter(),
                     None => continue,
                 };
+                eprintln!("paths = {:#?}", paths);
                 for p in paths {
                     use std::collections::hash_map::Entry;
                     match paths_touched.entry(p) {
@@ -96,8 +96,8 @@ fn main() -> Result<(), Error> {
         }
     }
 
-
-    let current_paths: HashMap<_, _> = paths_touched.into_iter()
+    let current_paths: HashMap<_, _> = paths_touched
+        .into_iter()
         .filter(|(k, v)| {
             if v.equals_path(k) {
                 true
@@ -115,10 +115,11 @@ fn main() -> Result<(), Error> {
         fallback = match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(p) {
+            .open(p)
+        {
             Ok(f) => break f,
             Err(_) if fallback < 100 => fallback + 1,
-            Err(x) => Err(x)?
+            Err(x) => Err(x)?,
         }
     };
 

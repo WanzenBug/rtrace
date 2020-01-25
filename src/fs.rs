@@ -1,4 +1,4 @@
-use std::fs::{File, metadata, DirEntry};
+use std::fs::{metadata, DirEntry, File};
 use std::io::copy as io_copy_all;
 use std::io::ErrorKind as IOErrorKind;
 use std::os::unix::ffi::OsStrExt;
@@ -29,7 +29,6 @@ pub enum FsFingerprint {
     },
 }
 
-
 fn checksum_file(path: &Path) -> crate::Result<Vec<u8>> {
     let mut hash = Sha256::new();
     let mut file = File::open(path)?;
@@ -55,15 +54,16 @@ fn dir_entries(path: &Path) -> crate::Result<Vec<DirEntry>> {
 }
 
 impl FsFingerprint {
-    pub fn collect<A>(path: A) -> Result<Self, crate::Error> where A: AsRef<Path> {
+    pub fn collect<A>(path: A) -> Result<Self, crate::Error>
+    where
+        A: AsRef<Path>,
+    {
         match std::fs::metadata(path.as_ref()) {
-            Ok(ref m) if m.is_file() => {
-                Ok(FsFingerprint::File {
-                    modified_time: m.modified()?,
-                    size: m.len(),
-                    checksum: checksum_file(path.as_ref())?,
-                })
-            }
+            Ok(ref m) if m.is_file() => Ok(FsFingerprint::File {
+                modified_time: m.modified()?,
+                size: m.len(),
+                checksum: checksum_file(path.as_ref())?,
+            }),
             Ok(ref m) if m.is_dir() => {
                 let entries = dir_entries(path.as_ref())?;
                 Ok(FsFingerprint::Directory {
@@ -72,12 +72,12 @@ impl FsFingerprint {
                     checksum: checksum_dir(&entries)?,
                 })
             }
-            Ok(_) => {
-                Ok(FsFingerprint::Meta)
+            Ok(_) => Ok(FsFingerprint::Meta),
+            Err(ref e) if e.kind() == IOErrorKind::PermissionDenied => {
+                Ok(FsFingerprint::PermissionDenied)
             }
-            Err(ref e) if e.kind() == IOErrorKind::PermissionDenied => Ok(FsFingerprint::PermissionDenied),
             Err(ref e) if e.kind() == IOErrorKind::NotFound => Ok(FsFingerprint::NotFound),
-            Err(e) => Err(e)?
+            Err(e) => Err(e)?,
         }
     }
 
@@ -87,19 +87,37 @@ impl FsFingerprint {
         match (&self, metadata(path)) {
             (PermissionDenied, Err(ref e)) if e.kind() == IOErrorKind::PermissionDenied => true,
             (NotFound, Err(ref e)) if e.kind() == IOErrorKind::NotFound => true,
-            (File { checksum, modified_time, size }, Ok(ref v)) if v.is_file() => {
-                let time_equals = v.modified().map(|ref m| m == modified_time).unwrap_or(false);
+            (
+                File {
+                    checksum,
+                    modified_time,
+                    size,
+                },
+                Ok(ref v),
+            ) if v.is_file() => {
+                let time_equals = v
+                    .modified()
+                    .map(|ref m| m == modified_time)
+                    .unwrap_or(false);
                 let size_equals = v.len() == *size;
                 if time_equals && size_equals {
                     true
                 } else {
-                    checksum_file(path)
-                        .map(|c| &c == checksum)
-                        .unwrap_or(false)
+                    checksum_file(path).map(|c| &c == checksum).unwrap_or(false)
                 }
             }
-            (Directory { checksum, modified_time, number_entries }, Ok(ref v)) if v.is_dir() => {
-                let time_equals = v.modified().map(|ref m| m == modified_time).unwrap_or(false);
+            (
+                Directory {
+                    checksum,
+                    modified_time,
+                    number_entries,
+                },
+                Ok(ref v),
+            ) if v.is_dir() => {
+                let time_equals = v
+                    .modified()
+                    .map(|ref m| m == modified_time)
+                    .unwrap_or(false);
                 let entries = match dir_entries(path) {
                     Ok(e) => e,
                     Err(_) => return false,
@@ -125,12 +143,24 @@ impl PartialEq for FsFingerprint {
             (PermissionDenied, PermissionDenied) => true,
             (NotFound, NotFound) => true,
             (
-                File { checksum: own_checksum, .. },
-                File { checksum: other_checksum, .. },
+                File {
+                    checksum: own_checksum,
+                    ..
+                },
+                File {
+                    checksum: other_checksum,
+                    ..
+                },
             ) => own_checksum == other_checksum,
             (
-                Directory { checksum: own_checksum, .. },
-                Directory { checksum: other_checksum, .. },
+                Directory {
+                    checksum: own_checksum,
+                    ..
+                },
+                Directory {
+                    checksum: other_checksum,
+                    ..
+                },
             ) => own_checksum == other_checksum,
             _ => false,
         }

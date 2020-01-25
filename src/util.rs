@@ -25,11 +25,15 @@ pub mod serde_hex {
     use std::iter::FromIterator;
 
     use serde::de::Visitor;
-    use serde::Deserializer;
     use serde::export::PhantomData;
+    use serde::Deserializer;
     use serde::Serializer;
 
-    pub fn serialize<S, T>(data: &T, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer, T: AsRef<[u8]> {
+    pub fn serialize<S, T>(data: &T, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        T: AsRef<[u8]>,
+    {
         serializer.serialize_str(&hex::encode(data.as_ref()))
     }
 
@@ -37,21 +41,32 @@ pub mod serde_hex {
         _marker: PhantomData<T>,
     }
 
-    impl<'de, T> Visitor<'de> for HexVisitor<T> where T: FromIterator<u8> {
+    impl<'de, T> Visitor<'de> for HexVisitor<T>
+    where
+        T: FromIterator<u8>,
+    {
         type Value = T;
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
             formatter.write_str("a string containing only 0-9a-f")
         }
 
-        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> where E: serde::de::Error, {
-            let v = hex::decode(v)
-                .map_err(|e| E::custom(format!("{}", e)))?;
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            let v = hex::decode(v).map_err(|e| E::custom(format!("{}", e)))?;
             Ok(v.into_iter().collect())
         }
     }
 
-    pub fn deserialize<'de, D, T>(deserializer: D) -> Result<T, D::Error> where D: Deserializer<'de>, T: FromIterator<u8> {
-        deserializer.deserialize_str(HexVisitor::<T> { _marker: PhantomData })
+    pub fn deserialize<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: FromIterator<u8>,
+    {
+        deserializer.deserialize_str(HexVisitor::<T> {
+            _marker: PhantomData,
+        })
     }
 }

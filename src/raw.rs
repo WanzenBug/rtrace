@@ -6,9 +6,7 @@ extern "C" {
 }
 
 pub fn stop_self() -> crate::Result<()> {
-    let ret = unsafe {
-        wrapped_stop_self()
-    };
+    let ret = unsafe { wrapped_stop_self() };
 
     if ret == -1 {
         Err(OSError::last_os_error())?
@@ -18,19 +16,12 @@ pub fn stop_self() -> crate::Result<()> {
 }
 
 pub mod ptrace {
-    use std::{
-        os::{
-            raw::{
-                c_char,
-                c_int,
-                c_long,
-                c_void,
-            }
-        },
-        ptr::null_mut,
-    };
     use std::convert::TryInto;
     use std::mem::MaybeUninit;
+    use std::{
+        os::raw::{c_char, c_int, c_long, c_ulonglong, c_void},
+        ptr::null_mut,
+    };
 
     use super::OSError;
 
@@ -120,15 +111,93 @@ pub mod ptrace {
         },
     }
 
+    #[repr(C)]
+    #[derive(Debug, Copy, Clone)]
+    pub struct UserRegsAMD64 {
+        pub r15: c_ulonglong,
+        pub r14: c_ulonglong,
+        pub r13: c_ulonglong,
+        pub r12: c_ulonglong,
+        pub rbp: c_ulonglong,
+        pub rbx: c_ulonglong,
+        pub r11: c_ulonglong,
+        pub r10: c_ulonglong,
+        pub r9: c_ulonglong,
+        pub r8: c_ulonglong,
+        pub rax: c_ulonglong,
+        pub rcx: c_ulonglong,
+        pub rdx: c_ulonglong,
+        pub rsi: c_ulonglong,
+        pub rdi: c_ulonglong,
+        pub orig_rax: c_ulonglong,
+        pub rip: c_ulonglong,
+        pub cs: c_ulonglong,
+        pub eflags: c_ulonglong,
+        pub rsp: c_ulonglong,
+        pub ss: c_ulonglong,
+        pub fs_base: c_ulonglong,
+        pub gs_base: c_ulonglong,
+        pub ds: c_ulonglong,
+        pub es: c_ulonglong,
+        pub fs: c_ulonglong,
+        pub gs: c_ulonglong,
+    }
+
+    #[repr(C)]
+    #[derive(Debug, Copy, Clone)]
+    pub struct UserRegsX86 {
+        pub ebx: u32,
+        pub ecx: u32,
+        pub edx: u32,
+        pub esi: u32,
+        pub edi: u32,
+        pub ebp: u32,
+        pub eax: u32,
+        pub xds: u32,
+        pub xes: u32,
+        pub xfs: u32,
+        pub xgs: u32,
+        pub orig_eax: u32,
+        pub eip: u32,
+        pub xcs: u32,
+        pub eflags: u32,
+        pub esp: u32,
+        pub xss: u32,
+    }
+
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub union UserRegs {
+        pub amd64: UserRegsAMD64,
+        pub x86: UserRegsX86,
+    }
+
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct IOVec {
+        iov_base: *mut c_void,
+        iov_len: usize,
+    }
+
     extern "C" {
         #[must_use]
-        fn wrapped_fixed_arg_ptrace(request: PTraceRequest, pid: PTracePID, addr: *mut c_void, data: *mut c_void) -> c_long;
+        fn wrapped_fixed_arg_ptrace(
+            request: PTraceRequest,
+            pid: PTracePID,
+            addr: *mut c_void,
+            data: *mut c_void,
+        ) -> c_long;
 
         #[must_use]
         fn wrapped_waitpid(pid: PTracePID, options: c_int) -> RawWaitPID;
 
         #[must_use]
-        fn wrapped_process_vm_readv_string(pid: PTracePID, dest: *mut c_char, length: PTraceMemSize, source: *const c_void) -> PTraceMemSize;
+        fn wrapped_process_vm_readv_string(
+            pid: PTracePID,
+            dest: *mut c_char,
+            length: PTraceMemSize,
+            source: *const c_void,
+        ) -> PTraceMemSize;
     }
 
     pub type PTraceRequest = u32;
@@ -140,6 +209,7 @@ pub mod ptrace {
     const PTRACE_SYSCALL: PTraceRequest = 24;
     const PTRACE_SETOPTIONS: PTraceRequest = 16896;
     const PTRACE_GETEVENTMSG: PTraceRequest = 0x4201;
+    const PTRACE_GETREGSET: PTraceRequest = 0x4204;
     const PTRACE_GETSYSCALLINFO: PTraceRequest = 0x420e;
 
     const PTRACE_O_TRACESYSGOOD: PTraceOptionFlag = 0x00000001;
@@ -147,28 +217,35 @@ pub mod ptrace {
     const PTRACE_O_TRACEVFORK: PTraceOptionFlag = 0x00000004;
     const PTRACE_O_TRACECLONE: PTraceOptionFlag = 0x00000008;
     const PTRACE_O_TRACEEXEC: PTraceOptionFlag = 0x00000010;
+    const PTRACE_NT_PRSTATUS: PTraceOptionFlag = 1;
     const WAITPID_WAITALL: c_int = 0x40000000;
 
     fn ptrace_to_result(res: c_long) -> crate::Result<()> {
         match res {
             -1 => Err(OSError::last_os_error().into()),
-            _ => Ok(())
+            _ => Ok(()),
         }
     }
 
     pub fn trace_me() -> crate::Result<()> {
         unsafe {
-            ptrace_to_result(
-                wrapped_fixed_arg_ptrace(PTRACE_TRACEME, 0, null_mut(), null_mut())
-            )
+            ptrace_to_result(wrapped_fixed_arg_ptrace(
+                PTRACE_TRACEME,
+                0,
+                null_mut(),
+                null_mut(),
+            ))
         }
     }
 
     pub fn trace_syscall_with_signal_delivery(pid: PTracePID, signal: i32) -> crate::Result<()> {
         unsafe {
-            ptrace_to_result(
-                wrapped_fixed_arg_ptrace(PTRACE_SYSCALL, pid, null_mut(), signal as *mut c_void)
-            )
+            ptrace_to_result(wrapped_fixed_arg_ptrace(
+                PTRACE_SYSCALL,
+                pid,
+                null_mut(),
+                signal as *mut c_void,
+            ))
         }
     }
 
@@ -191,27 +268,53 @@ pub mod ptrace {
     }
 
     pub fn wait_all() -> crate::Result<WaitPID> {
-        unsafe {
-            wrapped_waitpid(-1, WAITPID_WAITALL)
-        }.into()
+        unsafe { wrapped_waitpid(-1, WAITPID_WAITALL) }.into()
     }
 
     pub fn wait_for(pid: PTracePID) -> crate::Result<WaitPID> {
-        unsafe {
-            wrapped_waitpid(pid, 0)
-        }.into()
+        unsafe { wrapped_waitpid(pid, 0) }.into()
     }
 
-    pub fn get_syscall_info(pid: PTracePID) -> crate::Result<PtraceSyscallInfo> {
+    pub fn get_syscall_info_fast(pid: PTracePID) -> Result<PtraceSyscallInfo, OSError> {
         let mut info = MaybeUninit::<PtraceSyscallInfo>::uninit();
         let size = std::mem::size_of_val(&info);
         let ret = unsafe {
-            wrapped_fixed_arg_ptrace(PTRACE_GETSYSCALLINFO, pid, size as *mut c_void, info.as_mut_ptr() as *mut c_void)
+            wrapped_fixed_arg_ptrace(
+                PTRACE_GETSYSCALLINFO,
+                pid,
+                size as *mut c_void,
+                info.as_mut_ptr() as *mut c_void,
+            )
         };
         if ret == -1 {
             Err(OSError::last_os_error().into())
         } else {
             Ok(unsafe { info.assume_init() })
+        }
+    }
+
+    pub fn get_process_registers(pid: PTracePID) -> Result<(usize, UserRegs), OSError> {
+        let mut regs = MaybeUninit::<UserRegs>::uninit();
+        let size = std::mem::size_of_val(&regs);
+
+        let mut iovec = IOVec {
+            iov_base: regs.as_mut_ptr() as *mut c_void,
+            iov_len: size,
+        };
+        let ret = unsafe {
+            wrapped_fixed_arg_ptrace(
+                PTRACE_GETREGSET,
+                pid,
+                PTRACE_NT_PRSTATUS as *mut c_void,
+                &mut iovec as *mut IOVec as *mut c_void,
+            )
+        };
+
+        if ret == -1 {
+            Err(OSError::last_os_error().into())
+        } else {
+            let regs = unsafe { regs.assume_init() };
+            Ok((iovec.iov_len, regs))
         }
     }
 
@@ -232,10 +335,16 @@ pub mod ptrace {
         }
     }
 
-
     fn get_event_msg(pid: PTracePID) -> crate::Result<u64> {
         let mut res = 0;
-        let ret = unsafe { wrapped_fixed_arg_ptrace(PTRACE_GETEVENTMSG, pid, null_mut(), &mut res as *mut u64 as *mut c_void) };
+        let ret = unsafe {
+            wrapped_fixed_arg_ptrace(
+                PTRACE_GETEVENTMSG,
+                pid,
+                null_mut(),
+                &mut res as *mut u64 as *mut c_void,
+            )
+        };
         if ret == -1 {
             Err(OSError::last_os_error().into())
         } else {
@@ -246,19 +355,39 @@ pub mod ptrace {
     impl From<RawWaitPID> for crate::Result<WaitPID> {
         fn from(raw: RawWaitPID) -> Self {
             match raw {
-                RawWaitPID { pid: -1, is_error_no_child: 1, .. } => Ok(WaitPID::NoChild),
+                RawWaitPID {
+                    pid: -1,
+                    is_error_no_child: 1,
+                    ..
+                } => Ok(WaitPID::NoChild),
                 RawWaitPID { pid: -1, .. } => Err(OSError::last_os_error())?,
-                RawWaitPID { exited: 1, pid, exit_status, .. } => Ok(WaitPID::Exited {
+                RawWaitPID {
+                    exited: 1,
                     pid,
                     exit_status,
-                }),
-                x @ RawWaitPID { is_stopped: 0, .. } => Err(format!("Process {} not stopped in waitpid(): {:#?}", x.pid, x))?,
-                RawWaitPID { terminated_by_signal: 1, pid, termination_signal, .. } => Ok(WaitPID::Terminated {
+                    ..
+                } => Ok(WaitPID::Exited { pid, exit_status }),
+                x @ RawWaitPID { is_stopped: 0, .. } => Err(format!(
+                    "Process {} not stopped in waitpid(): {:#?}",
+                    x.pid, x
+                ))?,
+                RawWaitPID {
+                    terminated_by_signal: 1,
+                    pid,
+                    termination_signal,
+                    ..
+                } => Ok(WaitPID::Terminated {
                     pid,
                     termination_signal,
                 }),
-                RawWaitPID { stopped_by_syscall: 1, pid, .. } => Ok(WaitPID::SysCall { pid }),
-                RawWaitPID { pid, event, signal, .. } if event > 0 => {
+                RawWaitPID {
+                    stopped_by_syscall: 1,
+                    pid,
+                    ..
+                } => Ok(WaitPID::SysCall { pid }),
+                RawWaitPID {
+                    pid, event, signal, ..
+                } if event > 0 => {
                     let other_pid = get_event_msg(pid)? as PTracePID;
                     let ty = match event {
                         0 => return Ok(WaitPID::Signal { pid, signal }),
@@ -266,17 +395,14 @@ pub mod ptrace {
                         2 => PtraceEventTy::VFork,
                         3 => PtraceEventTy::Clone,
                         4 => PtraceEventTy::Exec,
-                        _ => Err(format!("Could not decode event {} of process {}", event, pid))?,
+                        _ => Err(format!(
+                            "Could not decode event {} of process {}",
+                            event, pid
+                        ))?,
                     };
-                    Ok(WaitPID::PTraceEvent {
-                        pid,
-                        other_pid,
-                        ty,
-                    })
+                    Ok(WaitPID::PTraceEvent { pid, other_pid, ty })
                 }
-                RawWaitPID { pid, signal, .. } => {
-                    Ok(WaitPID::Signal { pid, signal })
-                }
+                RawWaitPID { pid, signal, .. } => Ok(WaitPID::Signal { pid, signal }),
             }
         }
     }
