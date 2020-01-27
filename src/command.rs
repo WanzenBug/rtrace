@@ -72,7 +72,7 @@ impl Iterator for TraceableChild {
                 let fast_syscall_info =
                     *INSTANCE.get_or_init(move || match ptrace::get_syscall_info_fast(pid) {
                         Ok(_) => true,
-                        Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => false,
+                        Err(ref e) if e.kind() == std::io::ErrorKind::InvalidInput => false,
                         Err(x) => panic!(
                             "Could not determine if PTRACE_GETSYSCALLINFO is supported, got {:?}",
                             x
