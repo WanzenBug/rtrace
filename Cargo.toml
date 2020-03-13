@@ -15,4 +15,6 @@ name = "dry"
 path = "src/main.rs"
 
 [dependencies]
-
+slog = "2.5"
+slog-term = "2.5"
+slog-async = "2.4"
