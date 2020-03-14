@@ -111,6 +111,7 @@ dependencies = [
 name = "dry"
 version = "0.1.0"
 dependencies = [
+ "libc 0.2.67 (registry+https://github.com/rust-lang/crates.io-index)",
  "slog 2.5.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "slog-async 2.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "slog-term 2.5.0 (registry+https://github.com/rust-lang/crates.io-index)",

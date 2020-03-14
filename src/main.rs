@@ -8,7 +8,7 @@ use slog_async;
 use slog_term;
 
 use dry;
-use dry::{TracingCommand, ProcessEventAction, ProcessEventActor};
+use dry::{StoppedProcess, TracingCommand, ProcessEvent, OsError};
 
 type DryError = Box<dyn Error + Send + Sync + 'static>;
 
@@ -34,14 +34,20 @@ fn main() {
 }
 
 fn run(log: Logger) -> Result<(), DryError> {
-    let cmd= parse()?;
+    let mut cmd = parse()?;
     let tracees = cmd.spawn_with_tracing()?;
 
-    for ev in tracees.on_process_event(|e| ProcessEventActor::resume_with(())) {
+    for ev in tracees.on_process_event(filter_syscall_stops) {
         let ev = ev?;
         info!(log, "Got event {:?}", ev);
     }
     Ok(())
+}
+
+fn filter_syscall_stops(process: StoppedProcess) -> Result<Option<ProcessEvent>, OsError> {
+    let ev = process.event()?;
+    process.resume()?;
+    Ok(Some(ev))
 }
 
 fn parse() -> Result<Command, DryError> {
