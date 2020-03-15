@@ -1,4 +1,3 @@
-use std::io::Error;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 

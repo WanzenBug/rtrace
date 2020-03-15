@@ -53,6 +53,15 @@ impl<'a> StoppedProcess<'a> {
         Ok(())
     }
 
+    pub fn resume_with_syscall(mut self) -> Result<(), OsError> {
+        unsafe {
+            raw::p_trace(libc::PTRACE_SYSCALL, self.pid, None, self.pending_signal.map(|s| s as *mut c_void))
+        }?;
+
+        self.state = StoppedProcessState::Resumed;
+        Ok(())
+    }
+
     pub fn resume(mut self) -> Result<(), OsError> {
         unsafe {
             raw::p_trace(libc::PTRACE_CONT, self.pid, None, self.pending_signal.map(|s| s as *mut c_void))
