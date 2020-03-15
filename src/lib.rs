@@ -32,7 +32,7 @@ impl TracingCommand for Command {
         let (ours, theirs) = process_sync()?;
 
         unsafe {
-            let raw = theirs.into_raw_fd();
+            let raw = theirs.as_raw_fd();
             self.pre_exec(move || {
                 // NB: PTrace setup happens somewhere here
                 let theirs = ProcessWait::from_raw_fd(raw);
@@ -41,6 +41,10 @@ impl TracingCommand for Command {
             });
         }
         let child_pid = self.fork_and_exec()?;
+
+        // NB: At this point, the read and in our process can be closed safely
+        drop(theirs);
+
         let options = libc::PTRACE_O_TRACESYSGOOD
             | libc::PTRACE_O_TRACECLONE
             | libc::PTRACE_O_TRACEVFORK
@@ -48,9 +52,7 @@ impl TracingCommand for Command {
             | libc::PTRACE_O_TRACEEXEC;
 
         unsafe {
-            eprintln!("libc::PTRACE_SEIZE");
             p_trace(libc::PTRACE_SEIZE, child_pid, None, Some(options as *mut c_void))?;
-            eprintln!("Done");
         }
         ours.resume();
 

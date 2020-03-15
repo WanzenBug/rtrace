@@ -70,7 +70,7 @@ impl ProcessWait {
         }
     }
 
-    pub unsafe fn into_raw_fd(self) -> c_int {
+    pub unsafe fn as_raw_fd(&self) -> c_int {
         let fd = self.0;
         forget(self);
         fd
