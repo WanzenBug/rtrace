@@ -3,43 +3,35 @@ use std::error::Error;
 use std::process::Command;
 use std::process::exit;
 
-use slog::{Drain, error, info, Logger};
-use slog_async;
-use slog_term;
-
 use dry;
-use dry::{StoppedProcess, TracingCommand, ProcessEvent, OsError};
+use dry::{OsError, ProcessEvent, StoppedProcess, TracingCommand};
+use log::error;
+use log::info;
+use pretty_env_logger;
 
 type DryError = Box<dyn Error + Send + Sync + 'static>;
 
 fn main() {
-    let decorator = slog_term::TermDecorator::new().build();
-    let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-    let drain = slog_async::Async::new(drain).build().fuse();
+    pretty_env_logger::init();
 
-    let log = slog::Logger::root(drain, slog::o!());
-
-    let result = run(log.clone());
-
-    let exitcode = match result {
+    let exitcode = match run() {
         Ok(()) => 0,
         Err(e) => {
-            error!(log, "{}", e);
+            error!("{}", e);
             1
         }
     };
 
-    drop(log);
     exit(exitcode)
 }
 
-fn run(log: Logger) -> Result<(), DryError> {
+fn run() -> Result<(), DryError> {
     let mut cmd = parse()?;
     let tracees = cmd.spawn_with_tracing()?;
 
     for ev in tracees.on_process_event(filter_syscall_stops) {
         let ev = ev?;
-        info!(log, "Got event {:?}", ev);
+        info!("Got event {:?}", ev);
     }
     Ok(())
 }
