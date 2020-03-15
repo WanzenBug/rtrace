@@ -1,10 +1,12 @@
 use std::os::raw::c_int;
-use std::os::raw::c_void;
 
 use libc::pid_t;
 
-use crate::{OsError, raw};
+use crate::OsError;
 use crate::ProcessEvent;
+use crate::raw::p_trace_cont;
+use crate::raw::p_trace_detach;
+use crate::raw::p_trace_syscall;
 use crate::TracedChildTree;
 
 #[derive(Clone)]
@@ -40,33 +42,24 @@ impl<'a> StoppedProcess<'a> {
     }
 
     pub fn detach(mut self) -> Result<(), OsError> {
-        unsafe {
-            raw::p_trace(libc::PTRACE_DETACH, self.pid, None, None)
-        }?;
-
+        p_trace_detach(self.pid, self.pending_signal)?;
         self.state = StoppedProcessState::Exited;
         Ok(())
     }
 
-    pub fn ignore(mut self) -> Result<(), OsError> {
+    pub fn keep_waiting(mut self) -> Result<(), OsError> {
         self.state = StoppedProcessState::Ignored;
         Ok(())
     }
 
     pub fn resume_with_syscall(mut self) -> Result<(), OsError> {
-        unsafe {
-            raw::p_trace(libc::PTRACE_SYSCALL, self.pid, None, self.pending_signal.map(|s| s as *mut c_void))
-        }?;
-
+        p_trace_syscall(self.pid, self.pending_signal)?;
         self.state = StoppedProcessState::Resumed;
         Ok(())
     }
 
     pub fn resume(mut self) -> Result<(), OsError> {
-        unsafe {
-            raw::p_trace(libc::PTRACE_CONT, self.pid, None, self.pending_signal.map(|s| s as *mut c_void))
-        }?;
-
+        p_trace_cont(self.pid, self.pending_signal)?;
         self.state = StoppedProcessState::Resumed;
         Ok(())
     }

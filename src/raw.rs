@@ -1,7 +1,7 @@
 use std::io::ErrorKind;
 use std::mem::MaybeUninit;
 use std::mem::size_of;
-use std::os::raw::{c_int, c_ulonglong};
+use std::os::raw::{c_int, c_ulong, c_ulonglong};
 use std::os::raw::c_long;
 use std::os::raw::c_void;
 use std::ptr::null_mut;
@@ -11,8 +11,15 @@ use libc::O_CLOEXEC;
 use libc::pid_t;
 use libc::pipe2;
 use libc::ptrace;
+use libc::PTRACE_GETEVENTMSG;
+use libc::PTRACE_INTERRUPT;
+use libc::PTRACE_SEIZE;
+use libc::PTRACE_DETACH;
+use libc::PTRACE_CONT;
+use libc::PTRACE_SYSCALL;
 use libc::read;
 use libc::waitpid;
+use log::debug;
 
 use crate::OsError;
 
@@ -27,7 +34,38 @@ pub fn wait_pid(pid: pid_t, options: c_int) -> Result<(pid_t, c_int), OsError> {
     }
 }
 
-pub unsafe fn p_trace(req: PTraceRequest, pid: pid_t, addr: Option<*mut c_void>, data: Option<*mut c_void>) -> Result<c_long, OsError> {
+pub fn p_trace_detach(pid: pid_t, signum: Option<c_int>) -> Result<(), OsError> {
+    unsafe { p_trace(PTRACE_DETACH, pid, None, signum.map(|x| x as *mut c_void)) }?;
+    Ok(())
+}
+
+pub fn p_trace_cont(pid: pid_t, signum: Option<c_int>) -> Result<(), OsError> {
+    unsafe { p_trace(PTRACE_CONT, pid, None, signum.map(|x| x as *mut c_void)) }?;
+    Ok(())
+}
+
+pub fn p_trace_syscall(pid: pid_t, signum: Option<c_int>) -> Result<(), OsError> {
+    unsafe { p_trace(PTRACE_SYSCALL, pid, None, signum.map(|x| x as *mut c_void)) }?;
+    Ok(())
+}
+
+pub fn p_trace_seize_and_interrupt(pid: pid_t, options: c_int) -> Result<(), OsError> {
+    debug!("Calling PTRACE_SEIZE and PTRACE_INTERRUPT on child process");
+    unsafe {
+        p_trace(PTRACE_SEIZE, pid, None, Some(options as *mut c_void))?;
+        p_trace(PTRACE_INTERRUPT, pid, None, None)?;
+    }
+    debug!("PTRACE_SEIZE and PTRACE_INTERRUPT successful");
+    Ok(())
+}
+
+pub fn p_trace_get_event_message(pid: pid_t) -> Result<c_ulong, OsError> {
+    let mut message = 0;
+    unsafe { p_trace(PTRACE_GETEVENTMSG, pid, None, Some(&mut message as *mut c_ulong as *mut c_void)) }?;
+    Ok(message)
+}
+
+unsafe fn p_trace(req: PTraceRequest, pid: pid_t, addr: Option<*mut c_void>, data: Option<*mut c_void>) -> Result<c_long, OsError> {
     match ptrace(req, pid, addr.unwrap_or(null_mut()), data.unwrap_or(null_mut())) {
         -1 => Err(OsError::last_os_error()),
         x => Ok(x)

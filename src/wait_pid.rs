@@ -1,10 +1,10 @@
 use std::io::ErrorKind;
-use std::os::raw::{c_int, c_ulong, c_void};
-
+use std::os::raw::c_int;
+use std::os::raw::c_ulong;
 use libc::pid_t;
 
 use crate::OsError;
-use crate::raw::p_trace;
+use crate::raw::p_trace_get_event_message;
 use crate::raw::wait_pid;
 
 #[derive(Debug)]
@@ -93,9 +93,7 @@ impl WaitPID {
             x => return Err(OsError::new(ErrorKind::Other, format!("Unknown ptrace event status: {}", x))),
         };
 
-        let mut msg = 0;
-
-        unsafe { p_trace(libc::PTRACE_GETEVENTMSG, source_pid, None, Some(&mut msg as *mut c_ulong as *mut c_void)) }?;
+        let msg = p_trace_get_event_message(source_pid)?;
 
         return Ok(WaitPID::PTraceEvent {
             pid: source_pid,

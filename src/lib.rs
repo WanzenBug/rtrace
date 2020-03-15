@@ -1,6 +1,5 @@
 pub use std::io::Error as OsError;
 use std::io::ErrorKind;
-use std::os::raw::c_void;
 use std::process::Command;
 
 use log::debug;
@@ -9,10 +8,8 @@ use log::trace;
 pub use crate::event::ProcessEvent;
 pub use crate::process::StoppedProcess;
 use crate::raw::get_syscall_number;
-use crate::raw::p_trace;
-use crate::raw::pipe;
-use crate::raw::fd_close;
-use crate::raw::read_wait;
+use crate::raw::p_trace_seize_and_interrupt;
+use crate::raw::p_trace_syscall;
 use crate::wait_pid::PTraceEventKind;
 use crate::wait_pid::WaitPID;
 
@@ -38,54 +35,24 @@ pub trait TracingCommand {
 
 impl TracingCommand for Command {
     fn spawn_with_tracing(&mut self) -> Result<TracedChildTree, OsError> {
-        use crate::command_ext::ForkAndExec;
+        use crate::command_ext::PreExecStopCommand;
 
         trace!("Called TracingCommand::spawn_with_tracing on {:?}", self);
 
-
-        debug!("Setting pre_exec hook to wait for synchronization");
-        let (ours, theirs) = unsafe {
-            debug!("Creating process synchronization pipe");
-            let (ours, theirs) = pipe()?;
-            debug!("Creation successful");
-
-            self.pre_exec(move || {
-                // We need to close the write clone here
-                fd_close(ours)?;
-
-                // NB: PTrace setup happens somewhere here
-                read_wait(theirs)?;
-                fd_close(theirs)?;
-                Ok(())
-            });
-            (ours, theirs)
-        };
-
         debug!("Fork and execute child");
-        let child_pid = self.fork_and_exec()?;
+        let child_guard = self.spawn_with_pre_exec_stop()?;
+        let child_pid = child_guard.child_id();
         debug!("Fork successful: child PID {}", child_pid);
 
-
-        // NB: At this point, the read and in our process can be closed safely
-        debug!("Closing read end of synchronization pipe in parent process");
-        unsafe { fd_close(theirs) }?;
-        debug!("Closing successful");
-
-        let options = libc::PTRACE_O_TRACESYSGOOD
+        p_trace_seize_and_interrupt(child_pid, libc::PTRACE_O_TRACESYSGOOD
             | libc::PTRACE_O_TRACECLONE
             | libc::PTRACE_O_TRACEVFORK
             | libc::PTRACE_O_TRACEFORK
-            | libc::PTRACE_O_TRACEEXEC;
+            | libc::PTRACE_O_TRACEEXEC,
+        )?;
 
-        debug!("Calling PTRACE_SEIZE and PTRACE_INTERRUPT on child process");
-        unsafe {
-            p_trace(libc::PTRACE_SEIZE, child_pid, None, Some(options as *mut c_void))?;
-            p_trace(libc::PTRACE_INTERRUPT, child_pid, None, None)?;
-        }
-        debug!("PTRACE_SEIZE and PTRACE_INTERRUPT successful");
-
-        debug!("Closing synchronization pipe, child can continue to execute");
-        unsafe { fd_close(ours) }?;
+        debug!("Dropping child guard, child can continue to execute");
+        drop(child_guard);
         debug!("Closing successful");
 
         debug!("Syncing up to child process via waitpid()");
@@ -94,7 +61,7 @@ impl TracingCommand for Command {
             x => Err(OsError::new(ErrorKind::Other, format!("Expected PTRACE_EVENT_STOP, got {:?} instead", x)))?,
         }
         debug!("Restart until next syscall event");
-        unsafe { p_trace(libc::PTRACE_SYSCALL, child_pid, None, None) }?;
+        p_trace_syscall(child_pid, None)?;
 
         debug!("This can either be the initial read() enter, or already the read() exit.");
         match next_syscall(child_pid)? {
@@ -123,7 +90,7 @@ impl TracingCommand for Command {
             }
         }
 
-        match get_syscall_number(child_pid)? {
+        match next_syscall(child_pid)? {
             libc::SYS_close => debug!("Got SYS_close exit"),
             x => Err(OsError::new(ErrorKind::Other, format!("Expected syscall to be SYS_close, got {} instead", x)))?,
         }
@@ -142,7 +109,7 @@ fn next_syscall(child_pid: libc::pid_t) -> Result<i64, OsError> {
         x => Err(OsError::new(ErrorKind::Other, format!("Expected syscall event, got {:?} instead", x)))?,
     }
     let number = get_syscall_number(child_pid)?;
-    unsafe { p_trace(libc::PTRACE_SYSCALL, child_pid, None, None) }?;
+    p_trace_syscall(child_pid, None)?;
     Ok(number)
 }
 
