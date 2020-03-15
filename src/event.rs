@@ -1,4 +1,5 @@
 use libc::pid_t;
+use crate::wait_pid::PTraceEventKind;
 
 #[derive(Debug, Copy, Clone)]
 pub struct ProcessEvent {
@@ -19,11 +20,9 @@ pub enum ProcessEventKind {
     },
     Event {
         event_pid: u32,
-        ty: (),
+        kind: PTraceEventKind,
     },
-    SignalDelivery {
-        signal: i32,
-    },
+    SignalDelivery(i32),
     ExitNormally(i32),
     ExitSignal(i32),
 }

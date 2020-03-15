@@ -7,7 +7,7 @@ use crate::OsError;
 use crate::raw::p_trace_get_event_message;
 use crate::raw::wait_pid;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum WaitPID {
     Exited {
         pid: pid_t,

@@ -36,9 +36,13 @@ fn run() -> Result<(), DryError> {
     Ok(())
 }
 
-fn filter_syscall_stops(process: StoppedProcess) -> Result<Option<ProcessEvent>, OsError> {
+fn filter_syscall_stops(mut process: StoppedProcess) -> Result<Option<ProcessEvent>, OsError> {
+    info!("Trying to access user event");
     let ev = process.event()?;
-    process.resume()?;
+    info!("Got ProcessEvent: {:?}", ev);
+    if !process.exited() {
+        process.resume_with_syscall()?;
+    }
     Ok(Some(ev))
 }
 

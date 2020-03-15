@@ -11,16 +11,17 @@ use libc::O_CLOEXEC;
 use libc::pid_t;
 use libc::pipe2;
 use libc::ptrace;
+use libc::PTRACE_CONT;
+use libc::PTRACE_DETACH;
 use libc::PTRACE_GETEVENTMSG;
 use libc::PTRACE_INTERRUPT;
 use libc::PTRACE_SEIZE;
-use libc::PTRACE_DETACH;
-use libc::PTRACE_CONT;
 use libc::PTRACE_SYSCALL;
 use libc::read;
 use libc::waitpid;
 use log::debug;
 
+use crate::event::ProcessEventKind;
 use crate::OsError;
 
 pub type PTraceRequest = libc::c_uint;
@@ -81,7 +82,34 @@ pub unsafe fn fork() -> Result<ForkResult, OsError> {
 }
 
 pub fn get_syscall_number(child_pid: pid_t) -> Result<i64, OsError> {
-    let mut regs = MaybeUninit::<UserRegs>::uninit();
+    match get_registers(child_pid)? {
+        UserRegs::AMD64(amd64) => Ok(amd64.orig_rax as i64),
+        UserRegs::X86(x86) => Ok(x86.orig_eax as i64),
+    }
+}
+
+pub fn get_syscall_info_fast(pid: pid_t) -> Result<PtraceSyscallInfo, OsError> {
+    let mut info = MaybeUninit::<PtraceSyscallInfo>::uninit();
+    let size = std::mem::size_of_val(&info);
+    unsafe {
+        p_trace(
+            todo!(),
+            pid,
+            Some(size as *mut c_void),
+            Some(info.as_mut_ptr() as *mut c_void),
+        )
+    }?;
+    Ok(unsafe { info.assume_init() })
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum ChildState {
+    UserSpace,
+    KernelSpace,
+}
+
+pub fn get_registers(pid: pid_t) -> Result<UserRegs, OsError> {
+    let mut regs = MaybeUninit::<UserRegsUnion>::uninit();
     let size = std::mem::size_of_val(&regs);
 
     let mut iovec = IOVec {
@@ -89,15 +117,47 @@ pub fn get_syscall_number(child_pid: pid_t) -> Result<i64, OsError> {
         iov_len: size,
     };
     let regs = unsafe {
-        p_trace(libc::PTRACE_GETREGSET, child_pid, Some(1 as *mut c_void), Some(&mut iovec as *mut IOVec as *mut c_void))?;
+        p_trace(libc::PTRACE_GETREGSET, pid, Some(1 as *mut c_void), Some(&mut iovec as *mut IOVec as *mut c_void))?;
         regs.assume_init()
     };
 
     unsafe {
         match (iovec.iov_len, regs) {
-            (size, UserRegs { x86 }) if size == size_of::<UserRegsX86>() => Ok(x86.orig_eax as i64),
-            (size, UserRegs { amd64 }) if size == size_of::<UserRegsAMD64>() => Ok(amd64.orig_rax as i64),
+            (size, UserRegsUnion { x86 }) if size == size_of::<UserRegsX86>() => Ok(UserRegs::X86(x86)),
+            (size, UserRegsUnion { amd64 }) if size == size_of::<UserRegsAMD64>() => Ok(UserRegs::AMD64(amd64)),
             _ => Err(OsError::new(ErrorKind::Other, "Got unexpected size of payload for PTRACE_GETREGSET")),
+        }
+    }
+}
+
+pub fn get_syscall_event_legacy(pid: pid_t, state: ChildState) -> Result<(ProcessEventKind, ChildState), OsError> {
+    let (syscall_number, args) = match get_registers(pid)? {
+        UserRegs::X86(x86) => todo!("Decoding for x86 not implemented yet!"),
+        UserRegs::AMD64(amd64) => (
+            amd64.orig_rax,
+            [
+                amd64.rdi, amd64.rsi, amd64.rdx, amd64.r10, amd64.r8, amd64.r9,
+            ],
+        ),
+    };
+
+    match state {
+        ChildState::UserSpace => Ok((
+            ProcessEventKind::SyscallEnter {
+                syscall_number,
+                args,
+            },
+            ChildState::KernelSpace,
+        )),
+        ChildState::KernelSpace => {
+            let ret_val = syscall_number as i64;
+            Ok((
+                ProcessEventKind::SyscallExit {
+                    return_val: ret_val,
+                    is_error: ret_val < 0,
+                },
+                ChildState::UserSpace,
+            ))
         }
     }
 }
@@ -191,9 +251,15 @@ pub struct UserRegsX86 {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub union UserRegs {
+pub union UserRegsUnion {
     pub amd64: UserRegsAMD64,
     pub x86: UserRegsX86,
+}
+
+#[derive(Debug)]
+pub enum UserRegs {
+    AMD64(UserRegsAMD64),
+    X86(UserRegsX86),
 }
 
 #[repr(C)]
@@ -203,3 +269,40 @@ pub struct IOVec {
     iov_len: usize,
 }
 
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct PtraceSyscallInfoEntry {
+    pub nr: u64,
+    pub args: [u64; 6],
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct PtraceSyscallInfoExit {
+    pub rval: i64,
+    pub is_error: u8,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct PtraceSyscallInfoSeccomp {
+    pub nr: u64,
+    pub args: [u64; 6],
+    pub ret_data: u32,
+}
+
+#[repr(C)]
+pub union PtraceSyscallEventArgs {
+    pub entry: PtraceSyscallInfoEntry,
+    pub exit: PtraceSyscallInfoExit,
+    pub seccomp: PtraceSyscallInfoSeccomp,
+}
+
+#[repr(C)]
+pub struct PtraceSyscallInfo {
+    pub op: u8,
+    pub arch: u32,
+    pub instruction_pointer: u64,
+    pub stack_pointer: u64,
+    pub event_args: PtraceSyscallEventArgs,
+}

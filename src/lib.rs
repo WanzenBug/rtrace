@@ -1,12 +1,15 @@
+use std::collections::HashMap;
 pub use std::io::Error as OsError;
 use std::io::ErrorKind;
 use std::process::Command;
 
+use libc::pid_t;
 use log::debug;
 use log::trace;
 
 pub use crate::event::ProcessEvent;
 pub use crate::process::StoppedProcess;
+use crate::raw::ChildState;
 use crate::raw::get_syscall_number;
 use crate::raw::p_trace_seize_and_interrupt;
 use crate::raw::p_trace_syscall;
@@ -21,6 +24,7 @@ mod wait_pid;
 
 pub struct TracedChildTree {
     child: libc::pid_t,
+    child_states: HashMap<pid_t, ChildState>,
 }
 
 
@@ -99,6 +103,7 @@ impl TracingCommand for Command {
 
         Ok(TracedChildTree {
             child: child_pid,
+            child_states: HashMap::new(),
         })
     }
 }
@@ -128,7 +133,10 @@ impl TracedChildTree {
 
 impl TracedChildTreeExt for TracedChildTree {
     fn next_event(&mut self) -> Result<StoppedProcess, OsError> {
-        unimplemented!()
+        debug!("Trying to get next event from traced children");
+        let wait_pid = WaitPID::from_all_children()?;
+        trace!("Next event: {:?}", wait_pid);
+        Ok(StoppedProcess::from_wait_pid(self, wait_pid))
     }
 }
 
@@ -137,11 +145,15 @@ impl<F, R, E> Iterator for TracedChildTreeIter<F> where F: for<'r> FnMut(Stopped
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
+            debug!("Waiting for next event");
             let proc = match self.tree.next_event() {
                 Ok(proc) => proc,
+                Err(ref e) if e.raw_os_error() == Some(libc::ECHILD) => return None,
                 Err(e) => return Some(Err(e)),
             };
+            trace!("Next stopped process: {:?}", proc);
 
+            trace!("Will call user supplied action on stopped process");
             match (self.action)(proc) {
                 Ok(Some(v)) => return Some(Ok(v)),
                 Ok(None) => continue,

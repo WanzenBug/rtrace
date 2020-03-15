@@ -1,20 +1,22 @@
+use std::fmt::{Debug, Error, Formatter};
 use std::os::raw::c_int;
 
 use libc::pid_t;
 
+use crate::event::ProcessEventKind;
 use crate::OsError;
 use crate::ProcessEvent;
-use crate::raw::p_trace_cont;
+use crate::raw::{ChildState, get_syscall_event_legacy, p_trace_cont};
 use crate::raw::p_trace_detach;
 use crate::raw::p_trace_syscall;
+use crate::raw::wait_pid;
 use crate::TracedChildTree;
+use crate::wait_pid::WaitPID;
 
-#[derive(Clone)]
 pub struct StoppedProcess<'a> {
-    pub pid: pid_t,
-    pending_signal: Option<c_int>,
-    pub state: StoppedProcessState,
-    tracer: &'a TracedChildTree,
+    state: StoppedProcessState,
+    wait_pid: WaitPID,
+    tracer: &'a mut TracedChildTree,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -27,7 +29,14 @@ pub enum StoppedProcessState {
 
 impl<'a> StoppedProcess<'a> {
     pub fn id(&self) -> i32 {
-        self.pid
+        use WaitPID::*;
+        match self.wait_pid {
+            Exited { pid, .. } => pid,
+            Terminated { pid, .. } => pid,
+            SysCall { pid, .. } => pid,
+            PTraceEvent { pid, .. } => pid,
+            Signal { pid, .. } => pid,
+        }
     }
 
     pub fn exited(&self) -> bool {
@@ -37,12 +46,30 @@ impl<'a> StoppedProcess<'a> {
         }
     }
 
-    pub fn event(&self) -> Result<ProcessEvent, OsError> {
-        unimplemented!()
+    pub fn event(&mut self) -> Result<ProcessEvent, OsError> {
+        use WaitPID::*;
+        let pid = self.id();
+        let event = match self.wait_pid {
+            Exited { exit_status, .. } => ProcessEventKind::ExitNormally(exit_status),
+            Terminated { termination_signal, .. } => ProcessEventKind::ExitSignal(termination_signal),
+            SysCall { .. } => {
+                let state = self.tracer.child_states.entry(pid).or_insert(ChildState::UserSpace);
+                let (sysinfo, new_child_state) = get_syscall_event_legacy(pid, *state)?;
+                *state = new_child_state;
+                sysinfo
+            }
+            PTraceEvent { message, kind, .. } => ProcessEventKind::Event { event_pid: message as u32, kind },
+            Signal { signal, .. } => ProcessEventKind::SignalDelivery(signal),
+        };
+
+        Ok(ProcessEvent {
+            pid,
+            event,
+        })
     }
 
     pub fn detach(mut self) -> Result<(), OsError> {
-        p_trace_detach(self.pid, self.pending_signal)?;
+        p_trace_detach(self.id(), self.pending_signal())?;
         self.state = StoppedProcessState::Exited;
         Ok(())
     }
@@ -53,26 +80,58 @@ impl<'a> StoppedProcess<'a> {
     }
 
     pub fn resume_with_syscall(mut self) -> Result<(), OsError> {
-        p_trace_syscall(self.pid, self.pending_signal)?;
+        p_trace_syscall(self.id(), self.pending_signal())?;
         self.state = StoppedProcessState::Resumed;
         Ok(())
     }
 
     pub fn resume(mut self) -> Result<(), OsError> {
-        p_trace_cont(self.pid, self.pending_signal)?;
+        p_trace_cont(self.id(), self.pending_signal())?;
         self.state = StoppedProcessState::Resumed;
         Ok(())
+    }
+
+    pub fn pending_signal(&self) -> Option<c_int> {
+        use WaitPID::*;
+        match self.wait_pid {
+            Signal { signal, .. } => Some(signal),
+            _ => None,
+        }
+    }
+
+    pub fn from_wait_pid(tracer: &'a mut TracedChildTree, wait_pid: WaitPID) -> Self {
+        use WaitPID::*;
+        let state = match wait_pid {
+            Exited { .. }
+            | Terminated { .. } => StoppedProcessState::Exited,
+            _ => StoppedProcessState::PTraceStop,
+        };
+
+        StoppedProcess {
+            state,
+            wait_pid,
+            tracer,
+        }
     }
 }
 
 impl<'a> Drop for StoppedProcess<'a> {
     fn drop(&mut self) {
-        let this = std::mem::replace(self, StoppedProcess { pid: self.pid, pending_signal: None, state: StoppedProcessState::Ignored, tracer: self.tracer });
-        match this.state {
+        match self.state {
             StoppedProcessState::PTraceStop => {
-                let _ = this.detach();
+                let _ = p_trace_detach(self.id(), self.pending_signal());
             }
             _ => (),
         }
+    }
+}
+
+impl<'a> Debug for StoppedProcess<'a> {
+    fn fmt(&self, f: &mut Formatter) -> ::std::fmt::Result {
+        f.debug_struct("StoppedProcess")
+            .field("state", &self.state)
+            .field("wait_pid", &self.wait_pid)
+            .field("tracer", &"<some tracer>")
+            .finish()
     }
 }
