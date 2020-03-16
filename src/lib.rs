@@ -23,7 +23,7 @@ mod raw;
 mod wait_pid;
 
 pub struct TracedChildTree {
-    child: libc::pid_t,
+    _child: libc::pid_t,
     child_states: HashMap<pid_t, ChildState>,
 }
 
@@ -55,54 +55,92 @@ impl TracingCommand for Command {
             | libc::PTRACE_O_TRACEEXEC,
         )?;
 
-        debug!("Dropping child guard, child can continue to execute");
-        drop(child_guard);
-        debug!("Closing successful");
-
         debug!("Syncing up to child process via waitpid()");
         match WaitPID::from_process(child_pid)? {
             WaitPID::PTraceEvent { kind: PTraceEventKind::Stop, .. } => (),
             x => Err(OsError::new(ErrorKind::Other, format!("Expected PTRACE_EVENT_STOP, got {:?} instead", x)))?,
         }
+
+        debug!("Dropping child guard, child can continue to execute");
+        drop(child_guard);
+        debug!("Closing successful");
+
         debug!("Restart until next syscall event");
         p_trace_syscall(child_pid, None)?;
 
-        debug!("This can either be the initial read() enter, or already the read() exit.");
-        match next_syscall(child_pid)? {
-            libc::SYS_read => debug!("Got expected SYS_read call"),
-            x => Err(OsError::new(ErrorKind::Other, format!("Expected syscall to be SYS_read, got {} instead", x)))?,
-        };
 
-        debug!("This is either the SYS_read exit or SYS_close enter. With this call we should know if we started with a enter or exit event");
+        // From the way we synchronize with the child process, the child process can be in 4
+        // different locations:
+        //
+        // From childs pre_exec lambda in command_ext.rs:
+        //    > // This is only executed in the child context. Close all unneeded file descriptors
+        //    > fd_close(our_child_stop)?;
+        //    > fd_close(our_parent_stop)?;
+        //    >
+        //    > // With this close, the parent can check that the child process has reached this
+        //    > // execution point
+        // 1|2> fd_close(their_parent_stop)?;
+        //    >
+        //    > // Wait for parent to close the other pipe. This signals the parent has done the
+        //    > // preparatory work
+        // 3|4> read_wait(their_child_stop)?;
+        //    > fd_close(their_child_stop)?;
+        // The child_guard ensures fd_close() was at least started, so the child can be in
+        // the close syscall in enter or exit (1|2).
+        // The other possibility is that the child stops at (3¼), which is the read() call, either
+        // in enter or exit event.
+
+
+        // Check for first read call
+        loop {
+            match next_syscall(child_pid)? {
+                libc::SYS_read => {
+                    debug!("Got expected read() call");
+                    break;
+                },
+                libc::SYS_close => {
+                    debug!("Got expected close() call");
+                    continue
+                },
+                x => {
+                    return Err(OsError::new(ErrorKind::Other, format!("Expected syscall to be read() or close(), got {} instead", x)));
+                },
+            }
+        }
+
+        // Now we have either observed the read() enter or exit event. The next event determines
+        // our relative position in the child code
+
+        debug!("This is either the read() exit or close() enter. With this call we should know if we started with a enter or exit event");
         let reached_close = match next_syscall(child_pid)? {
             libc::SYS_read => {
-                debug!("Entered second SYS_read, must be the exit call");
+                debug!("Entered second read(), must be the exit call");
                 false
             }
             libc::SYS_close => {
-                debug!("Entered first SYS_close, process almost syncronized!");
+                debug!("Entered first close(), process almost synchronized!");
                 true
             }
-            x => Err(OsError::new(ErrorKind::Other, format!("Expected syscall to be SYS_read or SYS_close, got {} instead", x)))?,
+            x => Err(OsError::new(ErrorKind::Other, format!("Expected syscall to be read() exit or close() enter, got {} instead", x)))?,
         };
 
         if !reached_close {
-            debug!("Not yet entered SYS_close, it must be the next call");
+            debug!("Not yet entered close(), it must be the next call");
             match next_syscall(child_pid)? {
-                libc::SYS_close => debug!("Reached expected SYS_close enter"),
-                x => Err(OsError::new(ErrorKind::Other, format!("Expected syscall to be SYS_close, got {} instead", x)))?,
+                libc::SYS_close => debug!("Reached expected close() enter"),
+                x => Err(OsError::new(ErrorKind::Other, format!("Expected syscall to be close() enter, got {} instead", x)))?,
             }
         }
 
         match next_syscall(child_pid)? {
             libc::SYS_close => debug!("Got SYS_close exit"),
-            x => Err(OsError::new(ErrorKind::Other, format!("Expected syscall to be SYS_close, got {} instead", x)))?,
+            x => Err(OsError::new(ErrorKind::Other, format!("Expected syscall to be close() exit, got {} instead", x)))?,
         }
 
-        debug!("All synced up, the next syscall events have to be ENTER events");
+        debug!("All synced up, the next syscall events have to be 'enter' events");
 
         Ok(TracedChildTree {
-            child: child_pid,
+            _child: child_pid,
             child_states: HashMap::new(),
         })
     }

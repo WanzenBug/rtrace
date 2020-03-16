@@ -88,20 +88,6 @@ pub fn get_syscall_number(child_pid: pid_t) -> Result<i64, OsError> {
     }
 }
 
-pub fn get_syscall_info_fast(pid: pid_t) -> Result<PtraceSyscallInfo, OsError> {
-    let mut info = MaybeUninit::<PtraceSyscallInfo>::uninit();
-    let size = std::mem::size_of_val(&info);
-    unsafe {
-        p_trace(
-            todo!(),
-            pid,
-            Some(size as *mut c_void),
-            Some(info.as_mut_ptr() as *mut c_void),
-        )
-    }?;
-    Ok(unsafe { info.assume_init() })
-}
-
 #[derive(Debug, Copy, Clone)]
 pub enum ChildState {
     UserSpace,
@@ -132,7 +118,7 @@ pub fn get_registers(pid: pid_t) -> Result<UserRegs, OsError> {
 
 pub fn get_syscall_event_legacy(pid: pid_t, state: ChildState) -> Result<(ProcessEventKind, ChildState), OsError> {
     let (syscall_number, args) = match get_registers(pid)? {
-        UserRegs::X86(x86) => todo!("Decoding for x86 not implemented yet!"),
+        UserRegs::X86(x86) => todo!("Decoding for x86 not implemented yet! {:?      }", x86),
         UserRegs::AMD64(amd64) => (
             amd64.orig_rax,
             [
@@ -267,42 +253,4 @@ pub enum UserRegs {
 pub struct IOVec {
     iov_base: *mut c_void,
     iov_len: usize,
-}
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct PtraceSyscallInfoEntry {
-    pub nr: u64,
-    pub args: [u64; 6],
-}
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct PtraceSyscallInfoExit {
-    pub rval: i64,
-    pub is_error: u8,
-}
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct PtraceSyscallInfoSeccomp {
-    pub nr: u64,
-    pub args: [u64; 6],
-    pub ret_data: u32,
-}
-
-#[repr(C)]
-pub union PtraceSyscallEventArgs {
-    pub entry: PtraceSyscallInfoEntry,
-    pub exit: PtraceSyscallInfoExit,
-    pub seccomp: PtraceSyscallInfoSeccomp,
-}
-
-#[repr(C)]
-pub struct PtraceSyscallInfo {
-    pub op: u8,
-    pub arch: u32,
-    pub instruction_pointer: u64,
-    pub stack_pointer: u64,
-    pub event_args: PtraceSyscallEventArgs,
 }

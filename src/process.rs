@@ -1,15 +1,15 @@
-use std::fmt::{Debug, Error, Formatter};
+use std::fmt::Debug;
+use std::fmt::Formatter;
 use std::os::raw::c_int;
-
-use libc::pid_t;
 
 use crate::event::ProcessEventKind;
 use crate::OsError;
 use crate::ProcessEvent;
-use crate::raw::{ChildState, get_syscall_event_legacy, p_trace_cont};
+use crate::raw::ChildState;
+use crate::raw::get_syscall_event_legacy;
+use crate::raw::p_trace_cont;
 use crate::raw::p_trace_detach;
 use crate::raw::p_trace_syscall;
-use crate::raw::wait_pid;
 use crate::TracedChildTree;
 use crate::wait_pid::WaitPID;
 
