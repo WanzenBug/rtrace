@@ -8,6 +8,7 @@ use log::debug;
 use log::trace;
 
 pub use crate::event::ProcessEvent;
+pub use crate::event::ProcessEventKind;
 pub use crate::process::StoppedProcess;
 use crate::raw::ChildState;
 use crate::raw::get_syscall_number;

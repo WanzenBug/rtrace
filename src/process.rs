@@ -1,11 +1,11 @@
 use std::fmt::Debug;
 use std::fmt::Formatter;
-use std::os::raw::c_int;
+use std::os::raw::{c_int, c_void};
 
 use crate::event::ProcessEventKind;
 use crate::OsError;
 use crate::ProcessEvent;
-use crate::raw::ChildState;
+use crate::raw::{ChildState, safe_process_vm_readv};
 use crate::raw::get_syscall_event_legacy;
 use crate::raw::p_trace_cont;
 use crate::raw::p_trace_detach;
@@ -97,6 +97,10 @@ impl<'a> StoppedProcess<'a> {
             Signal { signal, .. } => Some(signal),
             _ => None,
         }
+    }
+
+    pub fn read_in_child_vm(&self, dest: &mut [u8], address: *const c_void) -> Result<usize, OsError> {
+        safe_process_vm_readv(self.id(), dest, address)
     }
 
     pub fn from_wait_pid(tracer: &'a mut TracedChildTree, wait_pid: WaitPID) -> Self {

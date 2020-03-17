@@ -8,6 +8,16 @@ pub struct ProcessEvent {
 }
 
 
+impl ProcessEvent {
+    pub fn pid(&self) -> pid_t {
+        self.pid
+    }
+
+    pub fn kind(&self) -> &ProcessEventKind {
+        &self.event
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 pub enum ProcessEventKind {
     SyscallEnter {

@@ -3,11 +3,20 @@ use std::error::Error;
 use std::process::Command;
 use std::process::exit;
 
-use dry;
-use dry::{OsError, ProcessEvent, StoppedProcess, TracingCommand};
+use log::debug;
 use log::error;
 use log::info;
+use log::trace;
 use pretty_env_logger;
+
+use dry;
+use dry::OsError;
+use dry::ProcessEvent;
+use dry::ProcessEventKind;
+use dry::StoppedProcess;
+use dry::TracingCommand;
+use std::os::raw::c_void;
+use std::ffi::{OsStr, OsString};
 
 type DryError = Box<dyn Error + Send + Sync + 'static>;
 
@@ -31,19 +40,31 @@ fn run() -> Result<(), DryError> {
 
     for ev in tracees.on_process_event(filter_syscall_stops) {
         let ev = ev?;
-        info!("Got event {:?}", ev);
+        info!("Tracked {:?}", ev)
     }
     Ok(())
 }
 
-fn filter_syscall_stops(mut process: StoppedProcess) -> Result<Option<ProcessEvent>, OsError> {
-    info!("Trying to access user event");
-    let ev = process.event()?;
-    info!("Got ProcessEvent: {:?}", ev);
+fn filter_syscall_stops(mut process: StoppedProcess) -> Result<Option<OsString>, OsError> {
+    trace!("Trying to access user event");
+    use ProcessEventKind::*;
+    let mut filepath_buffer = [0; 4096];
+    let ev = match process.event()?.kind() {
+        SyscallEnter { syscall_number: 59, args} => {
+            debug!("Entered execve()");
+            let n = process.read_in_child_vm(&mut filepath_buffer, args[0] as *const c_void)?;
+
+            let string_size =  filepath_buffer.iter().position(|b| *b == b'\0').unwrap_or(n);
+            use std::os::unix::ffi::OsStrExt;
+            Some((OsStr::from_bytes(&filepath_buffer[..string_size]).to_os_string()))
+        }
+        _ => None,
+    };
+    debug!("Got ProcessEvent: {:?}", ev);
     if !process.exited() {
         process.resume_with_syscall()?;
     }
-    Ok(Some(ev))
+    Ok(ev)
 }
 
 fn parse() -> Result<Command, DryError> {

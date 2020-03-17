@@ -19,6 +19,8 @@ use libc::PTRACE_SEIZE;
 use libc::PTRACE_SYSCALL;
 use libc::read;
 use libc::waitpid;
+use libc::iovec;
+use libc::process_vm_readv;
 use log::debug;
 
 use crate::event::ProcessEventKind;
@@ -98,12 +100,12 @@ pub fn get_registers(pid: pid_t) -> Result<UserRegs, OsError> {
     let mut regs = MaybeUninit::<UserRegsUnion>::uninit();
     let size = std::mem::size_of_val(&regs);
 
-    let mut iovec = IOVec {
+    let mut iovec = libc::iovec {
         iov_base: regs.as_mut_ptr() as *mut c_void,
         iov_len: size,
     };
     let regs = unsafe {
-        p_trace(libc::PTRACE_GETREGSET, pid, Some(1 as *mut c_void), Some(&mut iovec as *mut IOVec as *mut c_void))?;
+        p_trace(libc::PTRACE_GETREGSET, pid, Some(1 as *mut c_void), Some(&mut iovec as *mut iovec as *mut c_void))?;
         regs.assume_init()
     };
 
@@ -171,6 +173,23 @@ pub unsafe fn fd_close(fd: c_int) -> Result<(), OsError> {
     match close(fd) {
         -1 => Err(OsError::last_os_error()),
         _ => Ok(())
+    }
+}
+
+pub fn safe_process_vm_readv(pid: pid_t, dest: &mut [u8], process_address: *const c_void) -> Result<usize, OsError> {
+    let remote_iovec = iovec {
+        iov_base: process_address as *mut c_void,
+        iov_len: dest.len(),
+    };
+
+    let own_iovec = iovec {
+        iov_base: dest.as_mut_ptr() as *mut c_void,
+        iov_len: dest.len()
+    };
+
+    match unsafe { process_vm_readv(pid, &own_iovec as *const iovec, 1, &remote_iovec as *const iovec, 1, 0) } {
+        -1 => Err(OsError::last_os_error()),
+        x => Ok(x as usize),
     }
 }
 
@@ -246,11 +265,4 @@ pub union UserRegsUnion {
 pub enum UserRegs {
     AMD64(UserRegsAMD64),
     X86(UserRegsX86),
-}
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct IOVec {
-    iov_base: *mut c_void,
-    iov_len: usize,
 }
