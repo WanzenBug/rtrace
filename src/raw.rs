@@ -118,7 +118,7 @@ pub fn get_registers(pid: pid_t) -> Result<UserRegs, OsError> {
 
 pub fn get_syscall_event_legacy(pid: pid_t, state: ChildState) -> Result<(ProcessEventKind, ChildState), OsError> {
     let (syscall_number, args) = match get_registers(pid)? {
-        UserRegs::X86(x86) => todo!("Decoding for x86 not implemented yet! {:?      }", x86),
+        UserRegs::X86(x86) => unimplemented!("Decoding for x86 not implemented yet! {:?}", x86),
         UserRegs::AMD64(amd64) => (
             amd64.orig_rax,
             [
