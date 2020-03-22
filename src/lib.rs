@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 pub use std::io::Error as OsError;
+use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::process::Command;
 
@@ -17,9 +17,9 @@ use crate::raw::p_trace_syscall;
 use crate::wait_pid::PTraceEventKind;
 use crate::wait_pid::WaitPID;
 
-mod process;
-mod event;
 mod command_ext;
+mod event;
+mod process;
 mod raw;
 mod wait_pid;
 
@@ -98,14 +98,14 @@ impl TracingCommand for Command {
                 libc::SYS_read => {
                     debug!("Got expected read() call");
                     break;
-                },
+                }
                 libc::SYS_close => {
                     debug!("Got expected close() call");
-                    continue
-                },
+                    continue;
+                }
                 x => {
                     return Err(OsError::new(ErrorKind::Other, format!("Expected syscall to be read() or close(), got {} instead", x)));
-                },
+                }
             }
         }
 

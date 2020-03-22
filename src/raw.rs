@@ -119,13 +119,14 @@ pub fn get_registers(pid: pid_t) -> Result<UserRegs, OsError> {
 }
 
 pub fn get_syscall_event_legacy(pid: pid_t, state: ChildState) -> Result<(ProcessEventKind, ChildState), OsError> {
-    let (syscall_number, args) = match get_registers(pid)? {
+    let (syscall_number, args, ret_val) = match get_registers(pid)? {
         UserRegs::X86(x86) => unimplemented!("Decoding for x86 not implemented yet! {:?}", x86),
         UserRegs::AMD64(amd64) => (
             amd64.orig_rax,
             [
                 amd64.rdi, amd64.rsi, amd64.rdx, amd64.r10, amd64.r8, amd64.r9,
             ],
+            amd64.rax,
         ),
     };
 
@@ -138,7 +139,7 @@ pub fn get_syscall_event_legacy(pid: pid_t, state: ChildState) -> Result<(Proces
             ChildState::KernelSpace,
         )),
         ChildState::KernelSpace => {
-            let ret_val = syscall_number as i64;
+            let ret_val = ret_val as i64;
             Ok((
                 ProcessEventKind::SyscallExit {
                     return_val: ret_val,

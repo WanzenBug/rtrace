@@ -12,6 +12,7 @@ use crate::raw::p_trace_detach;
 use crate::raw::p_trace_syscall;
 use crate::TracedChildTree;
 use crate::wait_pid::WaitPID;
+use std::ffi::{OsString, OsStr};
 
 pub struct StoppedProcess<'a> {
     state: StoppedProcessState,
@@ -101,6 +102,14 @@ impl<'a> StoppedProcess<'a> {
 
     pub fn read_in_child_vm(&self, dest: &mut [u8], address: *const c_void) -> Result<usize, OsError> {
         safe_process_vm_readv(self.id(), dest, address)
+    }
+
+    pub fn read_os_string_in_child_vm(&self, address: *const c_void) -> Result<OsString, OsError> {
+        let mut filepath_buffer = [0; 4096];
+        let n = self.read_in_child_vm(&mut filepath_buffer, address)?;
+        let string_size =  filepath_buffer.iter().position(|b| *b == b'\0').unwrap_or(n);
+        use std::os::unix::ffi::OsStrExt;
+        Ok(OsStr::from_bytes(&filepath_buffer[..string_size]).to_os_string())
     }
 
     pub fn from_wait_pid(tracer: &'a mut TracedChildTree, wait_pid: WaitPID) -> Self {
