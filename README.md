@@ -1,26 +1,67 @@
 # DRY
-Don't repeat yourself: Cache the results of an **any** program, as long as the inputs have not changed
+Dry is a prototype of a more user-friendly `dvc run`. Instead of manually adding all
+dependencies, `dry` uses the `ptrace` API (as used by `strace`, `gdb`, ...) to 
+recognize inputs and outputs of a command. This information is then stored in a
+`.dvc` that can be used with other normal `dvc` commands.  
 
-Its like [`dvc`](https://dvc.org/) but it reduces the burden of tracking which code was executed.
-When developing a data pipeline, one often would like to re-run older versions of the pipeline, with
-just a small code snippet changed. `dry` tries to streamline this process by automatically skipping steps
-that stayed the same (kind of like make, but more general). 
+## Demo
+```terminal
+/test $ ll
+total 12K
+-rw-r--r--. 1 wanzenbug wanzenbug  14 Mar 25 15:07 input
+-rw-r--r--. 1 wanzenbug wanzenbug  32 Mar 25 15:01 op.py
+-rw-r--r--. 1 wanzenbug wanzenbug 256 Mar 25 15:06 stage.py
+/test $ cat input
+1
+2
+3
+4
+5
+6
+7
+/test $ cat op.py
+def op(a, b):
+     return a + b
+/test $ cat stage.py
+from op import op
 
-# How it works (more like: how it should work in the future...)
+inputs = []
+with open("input", "r") as lines:
+   for line in lines:
+      if not line.strip():
+          continue
+      inputs.append(int(line))
 
-On first run
+with open("output", "w") as output:
+   for i in inputs:
+      print(op(i, 2), file=output)
+/test $ dry run -f test.dvc python stage.py
+/test $ cat output
+3
+4
+5
+6
+7
+8
+9
+/test $ cat test.dvc
+---
+cmd: dry run -f test.dvc python stage.py
+md5: ""
+deps:
+  - path: op.py
+    md5: 4c5e633103f9c90a7a275928c3266455
+  - path: input
+    md5: 77c58f04583c86f78c51df158e3f35e8
+  - path: stage.py
+    md5: 1e0c1ae1f7d549148948a06e3237e8a3
+outs:
+  - path: output
+    cache: true
+    md5: 40754c006b40f76c0139286da37a7971
+meta:
+  created-by: dry
 ```
-dry my-program argument1 argument2 etc
-```
-`dry` checks the cache if this command has been run before. If not it will just run the command, as there is
-nothing in the cache to take the results from. This run will create a cache entry.
-
-If there is one (or more) match in the cache, further work is required. The cache entry contains **every**
-input of the old execution, meaning a full list of every file that was read/written by the program. Only if 
-[all](#implementation-details) of them match, the cached version of the outputs will be used.
-
-If there are cache entries that match the command line, but not every input stayed the same, the command is 
-executed again and will create a new cache entry.
 
 ## Implementation details
 `dry` tries to pull the inputs of the command by tracing the syscalls that are executed. This is done via the
@@ -28,30 +69,4 @@ executed again and will create a new cache entry.
 5.3 or above. Also, its is developed and tested on x86_64 only. 
 
 Things the are considered input:
-* Opened files (includes shared libraries and configurations in `/etc`. Will most likely exclude stuff in `/dev` and 
-  `/proc` in the future)
-* environment variables: Again subject to change, as that seems quite brittle
-
-
-## Demo
-Current proof of concept just checks that all files referenced in syscalls are as they were when first introduced.
-```
-$ cargo run --release -- python3 -c "2 + 2"
-    Finished release [optimized] target(s) in 0.02s
-     Running `target/release/dry python3 -c '2 + 2'`
-
-Process finished with exit code 0
-```
-
-On the second run:
-```
-cargo run --color=always --release -- python3 -c "2 + 2"
-    Finished release [optimized] target(s) in 3.27s
-     Running `target/release/dry python3 -c '2 + 2'`
-Trying cache entry: "2bbf95ed128e93eff66451cfc6efcdf46fdb401edf25106f8c4afea30df6eaf7/1578065473-0.entry"
-Cache entry matches, skipping...
-
-Process finished with exit code 0
-```
-
-Cache entry are current just written to the working directory.
+* Every **file** in the current repository
