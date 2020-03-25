@@ -14,6 +14,7 @@ use log::debug;
 use log::error;
 use log::trace;
 use log::warn;
+use md5::{Digest, Md5};
 use pretty_env_logger;
 use serde::Serialize;
 
@@ -22,7 +23,6 @@ use dry::OsError;
 use dry::ProcessEventKind;
 use dry::StoppedProcess;
 use dry::TracingCommand;
-use md5::{Md5, Digest};
 
 type DryError = Box<dyn Error + Send + Sync + 'static>;
 
@@ -54,15 +54,6 @@ fn run() -> Result<(), DryError> {
         let ops = ev?;
         for op in ops {
             let path = PathBuf::from(op.location).canonicalize()?;
-            if !path.starts_with(&repo_root) {
-                continue;
-            }
-
-            if !path.is_file() {
-                warn!("Skipping path {}, as its not a file", path.display());
-                continue;
-            }
-
             let entry = visited_files.entry(path).or_insert(Operation::Read);
             if op.operation == Operation::Write {
                 *entry = Operation::Write;
@@ -70,29 +61,54 @@ fn run() -> Result<(), DryError> {
         }
     }
 
-    let mut deps = Vec::new();
-    let mut outs = Vec::new();
+    let mut normalized_ops = HashMap::new();
+    for (path, op) in visited_files {
+        trace!("Looking at {}", path.display());
+        if !path.exists() {
+            trace!("Skipping {}, as it does not exist", path.display());
+            continue
+        }
 
-    for (full_path, mode) in visited_files {
+        if !path.is_file() {
+            trace!("Skipping {}, is not a file", path.display());
+            continue
+        }
+
+        let full_path = path.canonicalize()?;
+        if !full_path.starts_with(&repo_root) {
+            continue
+        }
         let in_repo_file = full_path.strip_prefix(&repo_root)?.to_path_buf();
 
         let string_path = match in_repo_file.to_str().map(ToString::to_string) {
             Some(x) => x,
             None => {
                 warn!("Could not convert {} to string", in_repo_file.display());
-                continue;
+                continue
             }
         };
 
+        let entry = normalized_ops.entry(string_path).or_insert(Operation::Read);
+        if op == Operation::Write {
+            *entry = Operation::Write;
+        }
+    }
+
+    let mut deps = Vec::new();
+    let mut outs = Vec::new();
+
+    for (string_path, mode) in normalized_ops {
+        trace!("Writing {} to dvc file", string_path);
+        let digest = file_digest(string_path.as_ref())?;
         match mode {
             Operation::Write => outs.push(DvcOuts {
                 path: string_path,
                 cache: true,
-                md5: file_digest(&full_path)?,
+                md5: digest,
             }),
             Operation::Read => deps.push(DvcDeps {
                 path: string_path,
-                md5: file_digest(&full_path)?,
+                md5: digest,
             })
         }
     }
