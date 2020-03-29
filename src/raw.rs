@@ -7,34 +7,37 @@ use std::os::raw::c_void;
 use std::ptr::null_mut;
 
 use libc::close;
+use libc::iovec;
 use libc::O_CLOEXEC;
 use libc::pid_t;
 use libc::pipe2;
+use libc::process_vm_readv;
 use libc::ptrace;
+use libc::PTRACE_ATTACH;
 use libc::PTRACE_CONT;
 use libc::PTRACE_DETACH;
 use libc::PTRACE_GETEVENTMSG;
 use libc::PTRACE_INTERRUPT;
 use libc::PTRACE_SEIZE;
 use libc::PTRACE_SYSCALL;
+use libc::PTRACE_SETOPTIONS;
 use libc::read;
 use libc::waitpid;
-use libc::iovec;
-use libc::process_vm_readv;
 use log::debug;
+use log::trace;
+use once_cell::sync::Lazy;
 
 use crate::event::ProcessEventKind;
 use crate::OsError;
+use std::fmt::Debug;
 
 pub type PTraceRequest = libc::c_uint;
 
-pub fn wait_pid(pid: pid_t, options: c_int) -> Result<(pid_t, c_int), OsError> {
+pub fn wait_pid(pid: pid_t, options: c_int) -> Result<(pid_t, WaitPIDStatus), OsError> {
     let mut status = 0;
 
-    match unsafe { waitpid(pid, &mut status as *mut c_int, options) } {
-        -1 => Err(OsError::last_os_error()),
-        x => Ok((x, status))
-    }
+    let pid = unsafe { check_ret_with_retry(|| waitpid(pid, &mut status as *mut c_int, options), -1) }?;
+    Ok((pid, WaitPIDStatus(status)))
 }
 
 pub fn p_trace_detach(pid: pid_t, signum: Option<c_int>) -> Result<(), OsError> {
@@ -52,13 +55,95 @@ pub fn p_trace_syscall(pid: pid_t, signum: Option<c_int>) -> Result<(), OsError>
     Ok(())
 }
 
-pub fn p_trace_seize_and_interrupt(pid: pid_t, options: c_int) -> Result<(), OsError> {
+static IS_P_TRACE_SEIZE_SUPPORTED: Lazy<bool> = Lazy::new(|| {
+    // Inspired by strace:
+    // https://github.com/strace/strace/blob/d9b459ca120136efa5515064b56f13f8b8ed2022/strace.c#L1641
+
+    let child_pid = match unsafe { fork() }.expect("Cannot fork() to determine PTRACE_SEIZE support") {
+        ForkResult::Child => {
+            // Child process, just pause and exit...
+            unsafe {
+                libc::pause();
+                libc::_exit(0);
+            }
+        }
+        ForkResult::Parent { child_pid } => child_pid,
+    };
+
+    let seize_works = match unsafe { p_trace(PTRACE_SEIZE, child_pid, None, None) } {
+        Ok(_) => true,
+        Err(e) => {
+            trace!("PTRACE_SEIZE returned with error: {}", e);
+            debug!("PTRACE_SEIZE does not work");
+            false
+        }
+    };
+
+    unsafe { libc::kill(child_pid, libc::SIGKILL) };
+
+    let (_pid, status) = wait_pid(child_pid, 0).expect("Unexpected wait_pid result");
+    if !status.signaled() {
+        panic!("Unexpected wait_pid status: {:?}", status)
+    }
+    seize_works
+});
+
+pub fn p_trace_become_tracer(pid: pid_t) -> Result<(), OsError> {
+    let options = libc::PTRACE_O_TRACESYSGOOD
+        | libc::PTRACE_O_TRACECLONE
+        | libc::PTRACE_O_TRACEVFORK
+        | libc::PTRACE_O_TRACEFORK
+        | libc::PTRACE_O_TRACEEXEC
+        | libc::PTRACE_O_TRACEEXIT ;
+
+    if *IS_P_TRACE_SEIZE_SUPPORTED {
+        p_trace_become_tracer_via_seize(pid, options)
+    } else {
+        p_trace_become_tracer_via_attach(pid, options)
+    }
+}
+
+fn p_trace_become_tracer_via_seize(pid: pid_t, options: c_int) -> Result<(), OsError> {
     debug!("Calling PTRACE_SEIZE and PTRACE_INTERRUPT on child process");
     unsafe {
         p_trace(PTRACE_SEIZE, pid, None, Some(options as *mut c_void))?;
         p_trace(PTRACE_INTERRUPT, pid, None, None)?;
     }
     debug!("PTRACE_SEIZE and PTRACE_INTERRUPT successful");
+
+    debug!("Syncing up to child process via waitpid(), waiting for PTRACE_STOP_EVENT");
+    let (_pid, status) = wait_pid(pid, 0)?;
+    match status.ptrace_event() {
+        // NB: not exported by libc right now
+        128 => Ok(()),
+        x => Err(OsError::new(ErrorKind::Other, format!("Got unexpected trace event {}, expected PTRACE_EVENT_STOP (128)", x))),
+    }
+}
+
+fn p_trace_become_tracer_via_attach(pid: pid_t, options: c_int) -> Result<(), OsError> {
+    debug!("Calling PTRACE_ATTACH on child process");
+    unsafe { p_trace(PTRACE_ATTACH, pid, None, None) }?;
+    // ATTACH will stop the child, however it is not guaranteed to be the first noticeable event
+    debug!("PTRACE_ATTACH successful, awaiting injected SIGSTOP signal");
+    loop {
+        let (_pid, status) = wait_pid(pid, 0)?;
+        if !status.stopped() {
+            Err(OsError::new(ErrorKind::Other, format!("Got unexpected event from child before attach was completed: {:?}", status)))?
+        }
+
+        match status.stop_signal() {
+            libc::SIGSTOP => break,
+            x => {
+                trace!("Got signal: {}, re-injecting into child", x);
+                unsafe { p_trace(PTRACE_CONT, pid, None, Some(x as *mut c_void)) }?
+            },
+        };
+    }
+    debug!("Got expected SIGSTOP in child, setting options");
+    // Child is stopped here, in the SIGSTOP injected by PTRACE_ATTACH. Now we can safely set all
+    // the options we want
+    unsafe { p_trace(PTRACE_SETOPTIONS, pid, None, Some(options as *mut c_void)) }?;
+    debug!("PTRACE_SETOPTIONS successful, child process is configured");
     Ok(())
 }
 
@@ -69,15 +154,12 @@ pub fn p_trace_get_event_message(pid: pid_t) -> Result<c_ulong, OsError> {
 }
 
 unsafe fn p_trace(req: PTraceRequest, pid: pid_t, addr: Option<*mut c_void>, data: Option<*mut c_void>) -> Result<c_long, OsError> {
-    match ptrace(req, pid, addr.unwrap_or(null_mut()), data.unwrap_or(null_mut())) {
-        -1 => Err(OsError::last_os_error()),
-        x => Ok(x)
-    }
+    let x = check_ret(move || ptrace(req, pid, addr.unwrap_or(null_mut()), data.unwrap_or(null_mut())), -1)?;
+    Ok(x)
 }
 
 pub unsafe fn fork() -> Result<ForkResult, OsError> {
-    match libc::fork() {
-        -1 => Err(OsError::last_os_error()),
+    match check_ret(move || libc::fork(), -1)? {
         0 => Ok(ForkResult::Child),
         child_pid => Ok(ForkResult::Parent { child_pid })
     }
@@ -89,6 +171,44 @@ pub fn get_syscall_number(child_pid: pid_t) -> Result<i64, OsError> {
         UserRegs::X86(x86) => Ok(x86.orig_eax as i64),
     }
 }
+
+#[derive(Debug, Copy, Clone)]
+pub struct WaitPIDStatus(pub c_int);
+
+impl WaitPIDStatus {
+    pub fn exited(&self) -> bool {
+        unsafe { libc::WIFEXITED(self.0) }
+    }
+
+    pub fn exit_status(&self) -> i32 {
+        unsafe { libc::WEXITSTATUS(self.0) }
+    }
+
+    pub fn signaled(&self) -> bool {
+        unsafe { libc::WIFSIGNALED(self.0) }
+    }
+
+    pub fn termination_signal(&self) -> i32 {
+        unsafe { libc::WTERMSIG(self.0) }
+    }
+
+    pub fn stopped(&self) -> bool {
+        unsafe { libc::WIFSTOPPED(self.0) }
+    }
+
+    pub fn stop_signal(&self) -> i32 {
+        unsafe { libc::WSTOPSIG(self.0) }
+    }
+
+    pub fn syscalled(&self) -> bool {
+        unsafe { libc::WSTOPSIG(self.0) == (libc::SIGTRAP | 0x80) }
+    }
+
+    pub fn ptrace_event(&self) -> i32 {
+        self.0 >> 16
+    }
+}
+
 
 #[derive(Debug, Copy, Clone)]
 pub enum ChildState {
@@ -154,27 +274,21 @@ pub fn get_syscall_event_legacy(pid: pid_t, state: ChildState) -> Result<(Proces
 
 pub unsafe fn pipe() -> Result<(c_int, c_int), OsError> {
     let mut result = [0, 0];
-    match pipe2(result.as_mut_ptr(), O_CLOEXEC) {
-        -1 => Err(OsError::last_os_error()),
-        // index 0 is the read end, 1 is the write end
-        _ => Ok((result[1], result[0]))
-    }
+    check_ret(|| pipe2(result.as_mut_ptr(), O_CLOEXEC), -1)?;
+    Ok((result[1], result[0]))
 }
 
 pub unsafe fn read_wait(fd: c_int) -> Result<(), OsError> {
     let mut buf = [0u8];
-    match read(fd, buf.as_mut_ptr() as *mut c_void, 1) {
-        -1 => Err(OsError::last_os_error()),
+    match check_ret_with_retry(|| read(fd, buf.as_mut_ptr() as *mut c_void, 1), -1)? {
         0 => Ok(()),
         _ => Err(OsError::new(ErrorKind::Other, "Read data when there should be nothing to read")),
     }
 }
 
 pub unsafe fn fd_close(fd: c_int) -> Result<(), OsError> {
-    match close(fd) {
-        -1 => Err(OsError::last_os_error()),
-        _ => Ok(())
-    }
+    check_ret_with_retry(|| close(fd), -1)?;
+    Ok(())
 }
 
 pub fn safe_process_vm_readv(pid: pid_t, dest: &mut [u8], process_address: *const c_void) -> Result<usize, OsError> {
@@ -185,14 +299,29 @@ pub fn safe_process_vm_readv(pid: pid_t, dest: &mut [u8], process_address: *cons
 
     let own_iovec = iovec {
         iov_base: dest.as_mut_ptr() as *mut c_void,
-        iov_len: dest.len()
+        iov_len: dest.len(),
     };
 
-    match unsafe { process_vm_readv(pid, &own_iovec as *const iovec, 1, &remote_iovec as *const iovec, 1, 0) } {
-        -1 => Err(OsError::last_os_error()),
-        x => Ok(x as usize),
+    let read_bytes = unsafe { check_ret(move || process_vm_readv(pid, &own_iovec as *const iovec, 1, &remote_iovec as *const iovec, 1, 0), -1) }?;
+    Ok(read_bytes as usize)
+}
+
+pub unsafe fn check_ret_with_retry<F, T>(mut func: F, error_code: T) -> Result<T, OsError> where F: FnMut() -> T, T: Eq + Copy + Debug {
+    loop {
+        return match check_ret(&mut func, error_code) {
+            Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
+            x => x,
+        };
     }
 }
+
+pub unsafe fn check_ret<F, T>(func: F, error_code: T) -> Result<T, OsError> where F: FnOnce() -> T, T: Eq + Debug {
+    match func() {
+        x if x == error_code => Err(OsError::last_os_error()),
+        x => Ok(x),
+    }
+}
+
 
 pub enum ForkResult {
     Child,

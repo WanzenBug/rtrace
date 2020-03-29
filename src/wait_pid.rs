@@ -1,11 +1,11 @@
 use std::io::ErrorKind;
-use std::os::raw::c_int;
 use std::os::raw::c_ulong;
 use libc::pid_t;
 
 use crate::OsError;
 use crate::raw::p_trace_get_event_message;
 use crate::raw::wait_pid;
+use crate::raw::WaitPIDStatus;
 
 #[derive(Debug, Copy, Clone)]
 pub enum WaitPID {
@@ -47,12 +47,12 @@ impl WaitPID {
     pub fn from_process(pid: pid_t) -> Result<WaitPID, OsError> {
         let (w_pid, status) = wait_pid(pid, 0)?;
         assert_eq!(w_pid, pid);
-        WaitPID::from_status(w_pid, WaitPIDStatus(status))
+        WaitPID::from_status(w_pid, status)
     }
 
     pub fn from_all_children() -> Result<WaitPID, OsError> {
         let (w_pid, status) = wait_pid(-1, libc::__WALL)?;
-        WaitPID::from_status(w_pid, WaitPIDStatus(status))
+        WaitPID::from_status(w_pid, status)
     }
 
     fn from_status(source_pid: pid_t, status: WaitPIDStatus) -> Result<WaitPID, OsError> {
@@ -100,42 +100,5 @@ impl WaitPID {
             message: msg,
             kind: event_kind,
         });
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
-struct WaitPIDStatus(c_int);
-
-impl WaitPIDStatus {
-    fn exited(&self) -> bool {
-        unsafe { libc::WIFEXITED(self.0) }
-    }
-
-    fn exit_status(&self) -> i32 {
-        unsafe { libc::WEXITSTATUS(self.0) }
-    }
-
-    fn signaled(&self) -> bool {
-        unsafe { libc::WIFSIGNALED(self.0) }
-    }
-
-    fn termination_signal(&self) -> i32 {
-        unsafe { libc::WTERMSIG(self.0) }
-    }
-
-    fn stopped(&self) -> bool {
-        unsafe { libc::WIFSTOPPED(self.0) }
-    }
-
-    fn stop_signal(&self) -> i32 {
-        unsafe { libc::WSTOPSIG(self.0) }
-    }
-
-    fn syscalled(&self) -> bool {
-        unsafe { libc::WSTOPSIG(self.0) == (libc::SIGTRAP | 0x80) }
-    }
-
-    fn ptrace_event(&self) -> i32 {
-        self.0 >> 16
     }
 }

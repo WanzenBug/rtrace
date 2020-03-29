@@ -48,6 +48,9 @@ impl PreExecStopCommand for Command {
                 // Wait for parent to close the other pipe. This signals the parent has done the
                 // preparatory work
                 read_wait(their_child_stop)?;
+                // NB: we need a second wait here, because PTRACE_ATTACH will skip the read() exit
+                // of the first call.
+                read_wait(their_child_stop)?;
                 fd_close(their_child_stop)?;
 
                 Ok(())
