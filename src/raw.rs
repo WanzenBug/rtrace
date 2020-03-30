@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::io::ErrorKind;
 use std::mem::MaybeUninit;
 use std::mem::size_of;
@@ -6,6 +7,7 @@ use std::os::raw::c_long;
 use std::os::raw::c_void;
 use std::ptr::null_mut;
 
+use libc::_SC_PAGESIZE;
 use libc::close;
 use libc::iovec;
 use libc::O_CLOEXEC;
@@ -19,9 +21,10 @@ use libc::PTRACE_DETACH;
 use libc::PTRACE_GETEVENTMSG;
 use libc::PTRACE_INTERRUPT;
 use libc::PTRACE_SEIZE;
-use libc::PTRACE_SYSCALL;
 use libc::PTRACE_SETOPTIONS;
+use libc::PTRACE_SYSCALL;
 use libc::read;
+use libc::sysconf;
 use libc::waitpid;
 use log::debug;
 use log::trace;
@@ -29,7 +32,7 @@ use once_cell::sync::Lazy;
 
 use crate::event::ProcessEventKind;
 use crate::OsError;
-use std::fmt::Debug;
+use std::cmp;
 
 pub type PTraceRequest = libc::c_uint;
 
@@ -94,7 +97,7 @@ pub fn p_trace_become_tracer(pid: pid_t) -> Result<(), OsError> {
         | libc::PTRACE_O_TRACEVFORK
         | libc::PTRACE_O_TRACEFORK
         | libc::PTRACE_O_TRACEEXEC
-        | libc::PTRACE_O_TRACEEXIT ;
+        | libc::PTRACE_O_TRACEEXIT;
 
     if *IS_P_TRACE_SEIZE_SUPPORTED {
         p_trace_become_tracer_via_seize(pid, options)
@@ -136,7 +139,7 @@ fn p_trace_become_tracer_via_attach(pid: pid_t, options: c_int) -> Result<(), Os
             x => {
                 trace!("Got signal: {}, re-injecting into child", x);
                 unsafe { p_trace(PTRACE_CONT, pid, None, Some(x as *mut c_void)) }?
-            },
+            }
         };
     }
     debug!("Got expected SIGSTOP in child, setting options");
@@ -291,18 +294,39 @@ pub unsafe fn fd_close(fd: c_int) -> Result<(), OsError> {
     Ok(())
 }
 
+static PAGESIZE: Lazy<usize> = Lazy::new(|| {
+    let pagesize = unsafe { check_ret(|| sysconf(_SC_PAGESIZE), -1) }.expect("Failed to get page size");
+    assert!(pagesize >= 1, "pagesize is always positive");
+    let pagesize = pagesize as usize;
+    assert!(pagesize.is_power_of_two(), "pagesize must be a power of two");
+    pagesize
+});
+
 pub fn safe_process_vm_readv(pid: pid_t, dest: &mut [u8], process_address: *const c_void) -> Result<usize, OsError> {
-    let remote_iovec = iovec {
+    if dest.len() > *PAGESIZE {
+        Err(OsError::new(ErrorKind::Other, "Reading of buffers bigger than the page size currently not supported"))?
+    }
+
+    let base_page = process_address as usize & !(*PAGESIZE - 1);
+    let next_page = base_page + *PAGESIZE;
+
+    let base_page_read_size = cmp::min(next_page - process_address as usize, dest.len());
+    let next_page_read_size = dest.len() - base_page_read_size;
+
+    let remote_iovec = [iovec {
         iov_base: process_address as *mut c_void,
-        iov_len: dest.len(),
-    };
+        iov_len: base_page_read_size,
+    }, iovec {
+        iov_base: next_page as *mut c_void,
+        iov_len: next_page_read_size,
+    }];
 
     let own_iovec = iovec {
         iov_base: dest.as_mut_ptr() as *mut c_void,
         iov_len: dest.len(),
     };
 
-    let read_bytes = unsafe { check_ret(move || process_vm_readv(pid, &own_iovec as *const iovec, 1, &remote_iovec as *const iovec, 1, 0), -1) }?;
+    let read_bytes = unsafe { check_ret(move || process_vm_readv(pid, &own_iovec as *const iovec, 1, &remote_iovec as *const iovec, 2, 0), -1) }?;
     Ok(read_bytes as usize)
 }
 

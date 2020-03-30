@@ -101,3 +101,6 @@ Cargo.lock
 **/*.rs.bk
 
 # End of https://www.gitignore.io/api/rust,intellij+all
+/example/
+!/example/stage.py
+!/example/some_import.py
