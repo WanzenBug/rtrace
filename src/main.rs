@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::env::args;
 use std::error::Error;
 use std::ffi::OsString;
@@ -49,7 +49,7 @@ fn run() -> Result<(), DryError> {
 
     let repo_root = Path::new(".").canonicalize()?;
 
-    let mut visited_files = HashMap::new();
+    let mut visited_files = BTreeMap::new();
     for ev in tracees.on_process_event(filter_successful_syscall()) {
         let ops = ev?;
         for op in ops {
@@ -61,22 +61,22 @@ fn run() -> Result<(), DryError> {
         }
     }
 
-    let mut normalized_ops = HashMap::new();
+    let mut normalized_ops = BTreeMap::new();
     for (path, op) in visited_files {
         trace!("Looking at {}", path.display());
         if !path.exists() {
             trace!("Skipping {}, as it does not exist", path.display());
-            continue
+            continue;
         }
 
         if !path.is_file() {
             trace!("Skipping {}, is not a file", path.display());
-            continue
+            continue;
         }
 
         let full_path = path.canonicalize()?;
         if !full_path.starts_with(&repo_root) {
-            continue
+            continue;
         }
         let in_repo_file = full_path.strip_prefix(&repo_root)?.to_path_buf();
 
@@ -84,7 +84,7 @@ fn run() -> Result<(), DryError> {
             Some(x) => x,
             None => {
                 warn!("Could not convert {} to string", in_repo_file.display());
-                continue
+                continue;
             }
         };
 
@@ -115,13 +115,16 @@ fn run() -> Result<(), DryError> {
 
     let own_cmd = format!("dry run -f {}", dvc_file);
     let meta = vec![("created-by".to_string(), "dry".to_string())].into_iter().collect();
-    let dvc_result = DvcStage {
+    let mut dvc_result = DvcStage {
         cmd: format!("{} {}", own_cmd, cmd.join(" ")),
         deps,
         md5: "".to_string(),
         outs,
         meta,
     };
+
+    let stage_md5 = calc_stage_md5(&dvc_result)?;
+    dvc_result.md5 = stage_md5;
 
     let file = File::create(dvc_file)?;
     serde_yaml::to_writer(file, &dvc_result)?;
@@ -207,6 +210,61 @@ fn file_digest(path: &Path) -> Result<String, DryError> {
     Ok(hex::encode(&digest.result()[..]))
 }
 
+
+fn calc_stage_md5(stage: &DvcStage) -> Result<String, DryError> {
+    #[derive(Debug, Serialize)]
+    struct DvcMd5LessStage<'a> {
+        cmd: &'a str,
+        deps: &'a [DvcDeps],
+        outs: &'a [DvcOuts],
+    }
+
+    struct PythonFormatter;
+
+    impl serde_json::ser::Formatter for PythonFormatter {
+        fn begin_array_value<W>(&mut self, writer: &mut W, first: bool) -> std::io::Result<()> where
+            W: ?Sized + std::io::Write, {
+            if first {
+                Ok(())
+            } else {
+                writer.write_all(b", ")
+            }
+        }
+
+        fn begin_object_key<W>(&mut self, writer: &mut W, first: bool) -> std::io::Result<()> where
+            W: ?Sized + std::io::Write, {
+            if first {
+                Ok(())
+            } else {
+                writer.write_all(b", ")
+            }
+        }
+
+        fn begin_object_value<W>(&mut self, writer: &mut W) -> std::io::Result<()> where
+            W: ?Sized + std::io::Write, {
+            writer.write_all(b": ")
+        }
+    }
+
+    let to_consider = DvcMd5LessStage {
+        cmd: &stage.cmd,
+        deps: &stage.deps,
+        outs: &stage.outs,
+    };
+
+    let mut digest = Md5::new();
+    let mut pr = Vec::new();
+    {
+        let mut serializer = serde_json::Serializer::with_formatter(&mut digest, PythonFormatter);
+        let mut serializer2 = serde_json::Serializer::with_formatter(&mut pr, PythonFormatter);
+        to_consider.serialize(&mut serializer)?;
+        to_consider.serialize(&mut serializer2)?;
+    }
+    trace!("File hashed as: {}", std::str::from_utf8(&pr).unwrap_or("Error converting to json"));
+    let res = digest.result();
+    Ok(hex::encode(&res[..]))
+}
+
 #[derive(Debug, Serialize)]
 struct DvcStage {
     cmd: String,
@@ -218,15 +276,15 @@ struct DvcStage {
 
 #[derive(Debug, Serialize)]
 struct DvcDeps {
-    path: String,
     md5: String,
+    path: String,
 }
 
 #[derive(Debug, Serialize)]
 struct DvcOuts {
-    path: String,
     cache: bool,
     md5: String,
+    path: String,
 }
 
 #[derive(Debug)]
