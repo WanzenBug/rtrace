@@ -31,7 +31,7 @@ pub enum WaitPID {
     },
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum PTraceEventKind {
     Exit,
     Fork,
