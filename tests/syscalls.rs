@@ -1,7 +1,7 @@
 use dry;
 use cc;
 use std::io::Write;
-use dry::TracingCommand;
+use dry::{TracingCommand, StoppedProcess};
 use log::trace;
 use sha2::{Sha256, Digest};
 
@@ -95,7 +95,7 @@ fn test_exe(c_code: &str) -> impl Iterator<Item=Result<dry::ProcessEvent, dry::O
     let test_cmd = std::process::Command::new(exec_path)
         .spawn_with_tracing()
         .expect("Tracing should be possible");
-    let mut iter = test_cmd.on_process_event::<_, _, dry::OsError>(|mut stopped| {
+    let mut iter = test_cmd.on_process_event(|mut stopped: StoppedProcess| {
         let ev = stopped.event()?;
         if !stopped.exited() {
             stopped.resume_with_syscall()?;

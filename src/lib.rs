@@ -29,13 +29,29 @@ pub struct TracedChildTree {
 }
 
 
-pub struct TracedChildTreeIter<F> {
+pub struct TracedChildTreeIter<H> {
     tree: TracedChildTree,
-    action: F,
+    handler: H,
 }
 
 pub trait TracingCommand {
     fn spawn_with_tracing(&mut self) -> Result<TracedChildTree, OsError>;
+}
+
+pub trait RawTraceEventHandler {
+    type IterationItem;
+    type Error: From<OsError>;
+
+    fn handle(&mut self, stop_event: StoppedProcess) -> Result<Option<Self::IterationItem>, Self::Error>;
+}
+
+impl<F, E, R> RawTraceEventHandler for F where F: FnMut(StoppedProcess) -> Result<Option<R>, E>, E: From<OsError> {
+    type IterationItem = R;
+    type Error = E;
+
+    fn handle(&mut self, stop_event: StoppedProcess) -> Result<Option<Self::IterationItem>, Self::Error> {
+        (self)(stop_event)
+    }
 }
 
 impl TracingCommand for Command {
@@ -148,10 +164,10 @@ fn next_syscall(child_pid: libc::pid_t) -> Result<i64, OsError> {
 }
 
 impl TracedChildTree {
-    pub fn on_process_event<F, R, E>(self, action: F) -> TracedChildTreeIter<F> where F: for<'r> FnMut(StoppedProcess<'r>) -> Result<Option<R>, E>, E: Into<OsError> {
+    pub fn on_process_event<H>(self, handler: H) -> TracedChildTreeIter<H>  {
         TracedChildTreeIter {
             tree: self,
-            action,
+            handler,
         }
     }
 
@@ -163,8 +179,8 @@ impl TracedChildTree {
     }
 }
 
-impl<F, R, E> Iterator for TracedChildTreeIter<F> where F: for<'r> FnMut(StoppedProcess<'r>) -> Result<Option<R>, E>, E: Into<OsError> {
-    type Item = Result<R, OsError>;
+impl<H> Iterator for TracedChildTreeIter<H> where H: RawTraceEventHandler {
+    type Item = Result<H::IterationItem, H::Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -172,15 +188,15 @@ impl<F, R, E> Iterator for TracedChildTreeIter<F> where F: for<'r> FnMut(Stopped
             let proc = match self.tree.next_event() {
                 Ok(proc) => proc,
                 Err(ref e) if e.raw_os_error() == Some(libc::ECHILD) => return None,
-                Err(e) => return Some(Err(e)),
+                Err(e) => return Some(Err(e.into())),
             };
             trace!("Next stopped process: {:?}", proc);
 
             trace!("Will call user supplied action on stopped process");
-            match (self.action)(proc) {
+            match self.handler.handle(proc) {
                 Ok(Some(v)) => return Some(Ok(v)),
                 Ok(None) => continue,
-                Err(e) => return Some(Err(e.into())),
+                Err(e) => return Some(Err(e)),
             }
         }
     }
