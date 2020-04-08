@@ -1,8 +1,9 @@
 use dry;
 use cc;
-use tempfile;
 use std::io::Write;
 use dry::TracingCommand;
+use log::trace;
+use sha2::{Sha256, Digest};
 
 const CODE_PREFIX: &'static str = r#"
 #include <unistd.h>
@@ -15,10 +16,37 @@ const CODE_SUFFIX: &'static str = r#"
 }
 "#;
 
-fn compile(c_code: &str) -> impl Iterator<Item=Result<dry::ProcessEvent, dry::OsError>> {
-    let tempdir = tempfile::tempdir().expect("Could not create temporary directory");
-    let exec_path = tempdir.path().join("test_exec");
+macro_rules! assert_next_event_matches {
+    ($iter: expr, $( $pattern:pat )|+ $( if $guard: expr )?) => {
+        assert_next_event_matches!($iter, $( $pattern )|+ $( if $guard )?, "Unexpected event")
+    };
+    ($iter: expr, $( $pattern:pat )|+ $( if $guard: expr )?, $message: literal) => {
+        let ev = $iter.next()
+            .expect("Expected next event to exist, got None instead")
+            .expect("Expected next event to be read successfully, got error instead");
+        match ev.event {
+            $( $pattern )|+ $( if $guard )? => (),
+            x => panic!("{}: Got {:?} instead", $message, x),
+        }
+    };
+}
 
+macro_rules! assert_iteration_end {
+    ($iter: expr) => {
+        assert!($iter.next().is_none(), "Expected iteration to end");
+    };
+    ($iter: expr, $message: literal) => {
+        let ev = $iter.next();
+        match ev {
+            None => (),
+            Some(x) => panic!("{}: Got {:?} instead", $message, x),
+        };
+    };
+}
+
+
+fn compile(c_code: &str, output_path: &std::path::Path) {
+    trace!("Creating executable at: {}", output_path.display());
     let tool = cc::Build::new()
         .static_flag(true)
         .opt_level(0)
@@ -32,7 +60,7 @@ fn compile(c_code: &str) -> impl Iterator<Item=Result<dry::ProcessEvent, dry::Os
 
     let mut compiler_invocation = tool.to_command()
         .arg("-o")
-        .arg(&exec_path)
+        .arg(output_path)
         .arg("-nostartfiles")
         .arg("-x")
         .arg("c")
@@ -41,14 +69,28 @@ fn compile(c_code: &str) -> impl Iterator<Item=Result<dry::ProcessEvent, dry::Os
         .spawn()
         .expect("Compile should start");
 
-    eprintln!("Writing code: {}{}{}", CODE_PREFIX, c_code, CODE_SUFFIX);
+    trace!("Writing code: {}", c_code);
     let mut code_pipe = compiler_invocation.stdin.take().expect("Stdin is piped");
-    code_pipe.write_all(CODE_PREFIX.as_bytes()).expect("Pipe write to succeed");
     code_pipe.write_all(c_code.as_bytes()).expect("Pipe write to succeed");
-    code_pipe.write_all(CODE_SUFFIX.as_bytes()).expect("Pipe write to succeed");
     drop(code_pipe);
     let compiler_exit = compiler_invocation.wait().expect("Compiler should finish");
     assert!(compiler_exit.success(), "Compiler should compile code");
+}
+
+fn test_exe(c_code: &str) -> impl Iterator<Item=Result<dry::ProcessEvent, dry::OsError>> {
+    let current_dir = std::path::Path::new(file!())
+        .parent()
+        .expect("Parent directory must exist");
+    let test_exe_directory = current_dir.join("test_executables");
+    std::fs::create_dir_all(&test_exe_directory).expect("Could not create test_executables directory");
+
+    let full_code = [CODE_PREFIX, c_code, CODE_SUFFIX].join("");
+    let hash = Sha256::digest(full_code.as_ref());
+    let exec_path = test_exe_directory.join(hex::encode(&hash));
+
+    if !exec_path.exists() {
+        compile(&full_code, &exec_path);
+    }
 
     let test_cmd = std::process::Command::new(exec_path)
         .spawn_with_tracing()
@@ -61,52 +103,31 @@ fn compile(c_code: &str) -> impl Iterator<Item=Result<dry::ProcessEvent, dry::Os
         Ok(Some(ev))
     });
 
-    let execve_enter_event = iter.next()
-        .expect("execve() to be called")
-        .expect("execve() to be called");
-    assert!(matches!(execve_enter_event.event, dry::ProcessEventKind::SyscallEnter { syscall_number: 59, ..}));
-
-    let execve_ptrace_stop_event = iter.next()
-        .expect("execve() to be called")
-        .expect("execve() to be called");
-    assert!(matches!(execve_ptrace_stop_event.event, dry::ProcessEventKind::Event { kind: dry::PTraceEventKind::Exec, ..}));
-
-    let execve_exit_event = iter.next()
-        .expect("execve() to be called")
-        .expect("execve() to be called");
-    assert!(matches!(execve_exit_event.event, dry::ProcessEventKind::SyscallExit { is_error: false, .. }));
+    assert_next_event_matches!(iter, dry::ProcessEventKind::SyscallEnter { syscall_number, ..} if syscall_number == libc::SYS_execve as u64, "Error in setup");
+    assert_next_event_matches!(iter, dry::ProcessEventKind::Event { kind: dry::PTraceEventKind::Exec, ..}, "Error in setup");
+    assert_next_event_matches!(iter, dry::ProcessEventKind::SyscallExit { is_error: false, .. }, "Error in setup");
     iter
 }
 
 #[test]
 fn test_exit() {
-    let mut process = compile("syscall(SYS_exit, 3);");
+    let mut process = test_exe("syscall(SYS_exit, 3);");
 
-    let ev = process.next()
-        .expect("Expected syscall event")
-        .expect("Syscall should be readable");
-
-    // Call exit syscall
-    assert_eq!(ev.event, dry::ProcessEventKind::SyscallEnter {
-        syscall_number: libc::SYS_exit as u64,
+    // Receive syscall enter event
+    assert_next_event_matches!(process, dry::ProcessEventKind::SyscallEnter {
+        syscall_number,
         args: [3, 0, 0, 0, 0, 0],
-    });
+    } if syscall_number == libc::SYS_exit as u64);
 
     // Receive ptrace event
-    let ev = process.next()
-        .expect("Expected syscall event")
-        .expect("Syscall should be readable");
-    assert!(matches!(ev.event, dry::ProcessEventKind::Event {
+    assert_next_event_matches!(process, dry::ProcessEventKind::Event {
         kind: dry::PTraceEventKind::Exit,
         ..
-    }));
+    });
 
     // Receive process exit (waitpid)
-    let ev = process.next()
-        .expect("Expected syscall event")
-        .expect("Syscall should be readable");
-    assert!(matches!(ev.event, dry::ProcessEventKind::ExitNormally(3)));
+    assert_next_event_matches!(process, dry::ProcessEventKind::ExitNormally(3));
 
     // Process not running anymore
-    assert!(process.next().is_none());
+    assert_iteration_end!(process);
 }
