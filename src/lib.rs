@@ -147,10 +147,6 @@ fn next_syscall(child_pid: libc::pid_t) -> Result<i64, OsError> {
     Ok(number)
 }
 
-pub trait TracedChildTreeExt {
-    fn next_event(&mut self) -> Result<StoppedProcess, OsError>;
-}
-
 impl TracedChildTree {
     pub fn on_process_event<F, R, E>(self, action: F) -> TracedChildTreeIter<F> where F: for<'r> FnMut(StoppedProcess<'r>) -> Result<Option<R>, E>, E: Into<OsError> {
         TracedChildTreeIter {
@@ -158,9 +154,7 @@ impl TracedChildTree {
             action,
         }
     }
-}
 
-impl TracedChildTreeExt for TracedChildTree {
     fn next_event(&mut self) -> Result<StoppedProcess, OsError> {
         debug!("Trying to get next event from traced children");
         let wait_pid = WaitPID::from_all_children()?;
