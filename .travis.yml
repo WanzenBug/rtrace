@@ -1,0 +1,8 @@
+language: rust
+rust:
+  - stable
+  - beta
+cache: cargo
+os:
+  - linux
+arch: amd64
