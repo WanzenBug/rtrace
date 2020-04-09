@@ -1,18 +1,24 @@
 use dry;
 use cc;
 use std::io::Write;
-use dry::{TracingCommand, StoppedProcess};
+use dry::TracingCommand;
+use dry::syscall_tracer::SyscallTracer;
+use dry::syscall_tracer::Syscall;
+use dry::syscall_tracer::SyscallKind;
 use log::trace;
-use sha2::{Sha256, Digest};
+use sha2::Sha256;
+use sha2::Digest;
 
 const CODE_PREFIX: &'static str = r#"
 #include <unistd.h>
+#include <sched.h>
 #include <sys/syscall.h>
 
-void _start() {
+int main() {
+    sched_yield();
 "#;
 const CODE_SUFFIX: &'static str = r#"
-    syscall(SYS_exit, 0);
+    return 0;
 }
 "#;
 
@@ -24,7 +30,7 @@ macro_rules! assert_next_event_matches {
         let ev = $iter.next()
             .expect("Expected next event to exist, got None instead")
             .expect("Expected next event to be read successfully, got error instead");
-        match ev.event {
+        match ev {
             $( $pattern )|+ $( if $guard )? => (),
             x => panic!("{}: Got {:?} instead", $message, x),
         }
@@ -48,8 +54,8 @@ macro_rules! assert_iteration_end {
 fn compile(c_code: &str, output_path: &std::path::Path) {
     trace!("Creating executable at: {}", output_path.display());
     let tool = cc::Build::new()
-        .static_flag(true)
         .opt_level(0)
+        .debug(true)
         .target("x86_64-unknown-linux-gnu")
         .host("x86_64-unknown-linux-gnu")
         .warnings(true)
@@ -61,7 +67,6 @@ fn compile(c_code: &str, output_path: &std::path::Path) {
     let mut compiler_invocation = tool.to_command()
         .arg("-o")
         .arg(output_path)
-        .arg("-nostartfiles")
         .arg("-x")
         .arg("c")
         .arg("-")
@@ -77,7 +82,7 @@ fn compile(c_code: &str, output_path: &std::path::Path) {
     assert!(compiler_exit.success(), "Compiler should compile code");
 }
 
-fn test_exe(c_code: &str) -> impl Iterator<Item=Result<dry::ProcessEvent, dry::OsError>> {
+fn test_exe(c_code: &str) -> impl Iterator<Item=Result<Syscall, dry::OsError>> {
     let current_dir = std::path::Path::new(file!())
         .parent()
         .expect("Parent directory must exist");
@@ -95,17 +100,14 @@ fn test_exe(c_code: &str) -> impl Iterator<Item=Result<dry::ProcessEvent, dry::O
     let test_cmd = std::process::Command::new(exec_path)
         .spawn_with_tracing()
         .expect("Tracing should be possible");
-    let mut iter = test_cmd.on_process_event(|mut stopped: StoppedProcess| {
-        let ev = stopped.event()?;
-        if !stopped.exited() {
-            stopped.resume_with_syscall()?;
-        }
-        Ok(Some(ev))
-    });
+    let mut iter = test_cmd.on_process_event(SyscallTracer::new());
 
-    assert_next_event_matches!(iter, dry::ProcessEventKind::SyscallEnter { syscall_number, ..} if syscall_number == libc::SYS_execve as u64, "Error in setup");
-    assert_next_event_matches!(iter, dry::ProcessEventKind::Event { kind: dry::PTraceEventKind::Exec, ..}, "Error in setup");
-    assert_next_event_matches!(iter, dry::ProcessEventKind::SyscallExit { is_error: false, .. }, "Error in setup");
+    assert_next_event_matches!(iter, Syscall { kind: SyscallKind::Execve{ result: Ok(_), .. }, .. }, "Error in setup");
+    loop {
+        if let Syscall { kind: SyscallKind::SchedYield, .. } = iter.next().expect("Error in setup").expect("Error in setup") {
+            break;
+        }
+    }
     iter
 }
 
@@ -114,20 +116,26 @@ fn test_exit() {
     let mut process = test_exe("syscall(SYS_exit, 3);");
 
     // Receive syscall enter event
-    assert_next_event_matches!(process, dry::ProcessEventKind::SyscallEnter {
-        syscall_number,
-        args: [3, 0, 0, 0, 0, 0],
-    } if syscall_number == libc::SYS_exit as u64);
-
-    // Receive ptrace event
-    assert_next_event_matches!(process, dry::ProcessEventKind::Event {
-        kind: dry::PTraceEventKind::Exit,
-        ..
-    });
-
-    // Receive process exit (waitpid)
-    assert_next_event_matches!(process, dry::ProcessEventKind::ExitNormally(3));
+    assert_next_event_matches!(process, Syscall { kind: SyscallKind::Exit { code: 3 }, .. });
 
     // Process not running anymore
+    assert_iteration_end!(process);
+}
+
+
+#[test]
+fn test_open() {
+    let mut process = test_exe(r#"syscall(SYS_open, "/dev/null", 2);"#);
+    assert_next_event_matches!(process, Syscall { kind: SyscallKind::Open { result: Ok(_), .. }, ..});
+    assert_next_event_matches!(process, Syscall { kind: SyscallKind::ExitGroup { code: 0 }, .. });
+    assert_iteration_end!(process);
+}
+
+#[test]
+fn test_open_failure() {
+    assert!(!std::path::Path::new("/dev/404").exists());
+    let mut process = test_exe(r#"syscall(SYS_open, "/dev/404", 2);"#);
+    assert_next_event_matches!(process, Syscall { kind: SyscallKind::Open { result: Err(_), .. }, ..});
+    assert_next_event_matches!(process, Syscall { kind: SyscallKind::ExitGroup { code: 0 }, .. });
     assert_iteration_end!(process);
 }
