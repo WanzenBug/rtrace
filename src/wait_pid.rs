@@ -51,7 +51,7 @@ impl WaitPID {
     }
 
     pub fn from_all_children() -> Result<WaitPID, OsError> {
-        let (w_pid, status) = wait_pid(-1, libc::__WALL)?;
+        let (w_pid, status) = wait_pid(-1, libc::__WALL | libc::__WNOTHREAD)?;
         WaitPID::from_status(w_pid, status)
     }
 

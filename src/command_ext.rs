@@ -11,6 +11,8 @@ use crate::raw::fork;
 use crate::raw::ForkResult;
 use crate::raw::pipe;
 use crate::raw::read_wait;
+use std::sync::Mutex;
+use once_cell::sync::Lazy;
 
 #[derive(Debug)]
 pub struct WaitingChildGuard {
@@ -24,9 +26,24 @@ pub trait PreExecStopCommand: CommandExt {
     unsafe fn pre_exec<F>(&mut self, f: F) -> &mut Self where F: FnMut() -> Result<(), OsError> + Send + Sync + 'static;
 }
 
+static PIPE_FD_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
 impl PreExecStopCommand for Command {
     fn spawn_with_pre_exec_stop(&mut self) -> Result<WaitingChildGuard, OsError> {
         unsafe {
+            // We need to serialize the pipe creation process. This is because we depend on the
+            // closing of specific file descriptors for synchronization with the child process.
+            // Should a second thread call fork() before we cleaned up our file descriptors, the
+            // other process will keep the file descriptors open.
+            //
+            // For normal processes this is not a problem, since we create the pipes with O_CLOEXEC.
+            // This closes the file descriptors on a execve() call. However, if two threads call
+            // this method at the same time, there would be a race condition, as both forks could
+            // happen in such a way that the other's FDs are cloned such that the initial wait never
+            // returns.
+            debug!("Acquire fork lock");
+            let pipe_fd_guard = PIPE_FD_MUTEX.lock();
+
             debug!("Creating child stop pipe");
             let (our_child_stop, their_child_stop) = pipe()?;
             debug!("Creation successful");
@@ -70,6 +87,9 @@ impl PreExecStopCommand for Command {
             debug!("Closing child process' end of file descriptors");
             fd_close(their_child_stop)?;
             fd_close(their_parent_stop)?;
+
+            debug!("Dropping fork lock after 'private' file descriptors are closed");
+            drop(pipe_fd_guard);
 
             // Wait for child to reach the pre_exec lambda. This can be checked by waiting on the
             // parent_stop pipe to close
