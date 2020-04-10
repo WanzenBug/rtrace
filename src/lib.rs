@@ -22,7 +22,7 @@ mod event;
 mod process;
 mod raw;
 mod wait_pid;
-pub mod syscall_tracer;
+pub mod enhanced_tracer;
 
 pub struct TracedChildTree {
     _child: libc::pid_t,

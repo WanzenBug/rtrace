@@ -2,9 +2,11 @@ use dry;
 use cc;
 use std::io::Write;
 use dry::TracingCommand;
-use dry::syscall_tracer::SyscallTracer;
-use dry::syscall_tracer::Syscall;
-use dry::syscall_tracer::SyscallKind;
+use dry::enhanced_tracer::EnhancedTracer;
+use dry::enhanced_tracer::EnhancedEvent;
+use dry::enhanced_tracer::EnhancedEventKind;
+use dry::enhanced_tracer::SyscallEnter;
+use dry::enhanced_tracer::SyscallExit;
 use log::trace;
 use sha2::Sha256;
 use sha2::Digest;
@@ -82,7 +84,7 @@ fn compile(c_code: &str, output_path: &std::path::Path) {
     assert!(compiler_exit.success(), "Compiler should compile code");
 }
 
-fn test_exe(c_code: &str) -> impl Iterator<Item=Result<Syscall, dry::OsError>> {
+fn test_exe(c_code: &str) -> impl Iterator<Item=Result<EnhancedEvent, dry::OsError>> {
     let current_dir = std::path::Path::new(file!())
         .parent()
         .expect("Parent directory must exist");
@@ -100,14 +102,16 @@ fn test_exe(c_code: &str) -> impl Iterator<Item=Result<Syscall, dry::OsError>> {
     let test_cmd = std::process::Command::new(exec_path)
         .spawn_with_tracing()
         .expect("Tracing should be possible");
-    let mut iter = test_cmd.on_process_event(SyscallTracer::new());
+    let mut iter = test_cmd.on_process_event(EnhancedTracer::new());
 
-    assert_next_event_matches!(iter, Syscall { kind: SyscallKind::Execve{ result: Ok(_), .. }, .. }, "Error in setup");
+    assert_next_event_matches!(iter, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::Execve{ .. }), .. }, "Error in setup");
+    assert_next_event_matches!(iter, EnhancedEvent { kind: EnhancedEventKind::SyscallExit(Ok(SyscallExit::Execve)), .. });
     loop {
-        if let Syscall { kind: SyscallKind::SchedYield, .. } = iter.next().expect("Error in setup").expect("Error in setup") {
+        if let EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::SchedYield), .. } = iter.next().expect("Error in setup").expect("Error in setup") {
             break;
         }
     }
+    assert_next_event_matches!(iter, EnhancedEvent { kind: EnhancedEventKind::SyscallExit(Ok(SyscallExit::SchedYield)), ..});
     iter
 }
 
@@ -116,7 +120,8 @@ fn test_exit() {
     let mut process = test_exe("syscall(SYS_exit, 3);");
 
     // Receive syscall enter event
-    assert_next_event_matches!(process, Syscall { kind: SyscallKind::Exit { code: 3 }, .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::Exit { code: 3 }), .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::Exit(3), .. });
 
     // Process not running anymore
     assert_iteration_end!(process);
@@ -126,8 +131,10 @@ fn test_exit() {
 #[test]
 fn test_open() {
     let mut process = test_exe(r#"syscall(SYS_open, "/dev/null", 2);"#);
-    assert_next_event_matches!(process, Syscall { kind: SyscallKind::Open { result: Ok(_), .. }, ..});
-    assert_next_event_matches!(process, Syscall { kind: SyscallKind::ExitGroup { code: 0 }, .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::Open { .. }), .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallExit(Ok(SyscallExit::Open(_))), .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::ExitGroup { code: 0 }), .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::Exit(0), .. });
     assert_iteration_end!(process);
 }
 
@@ -135,7 +142,9 @@ fn test_open() {
 fn test_open_failure() {
     assert!(!std::path::Path::new("/dev/404").exists());
     let mut process = test_exe(r#"syscall(SYS_open, "/dev/404", 2);"#);
-    assert_next_event_matches!(process, Syscall { kind: SyscallKind::Open { result: Err(_), .. }, ..});
-    assert_next_event_matches!(process, Syscall { kind: SyscallKind::ExitGroup { code: 0 }, .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::Open { .. }), .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallExit(Err(_)), .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::ExitGroup { code: 0 }), .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::Exit(0), .. });
     assert_iteration_end!(process);
 }
