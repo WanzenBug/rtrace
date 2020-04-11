@@ -1,10 +1,22 @@
-# DRY
-Dry is a prototype of a more user-friendly `dvc run`. Instead of manually adding all
+# rtrace - Rust bindings to ptrace API
+
+Provide safe bindings to `ptrace`. This can be used to implement debuggers or other development tools 
+like `strace` or similar.
+
+**NOTE**: This is optimized for Linux targets (with kernel >3.4) on x86_64. No other platform is
+currently supported.
+
+## Demo
+
+The repo contains a sample program that enhances [dvc](https://github.com/iterative/dvc/) with some
+convenience around creating a pipeline.
+
+### dry
+`dry` is a prototype of a more user-friendly `dvc run`. Instead of manually adding all
 dependencies, `dry` uses the `ptrace` API (as used by `strace`, `gdb`, ...) to 
 recognize inputs and outputs of a command. This information is then stored in a
 `.dvc` that can be used with other normal `dvc` commands.  
 
-## Demo
 ```terminal
 /test $ ll
 total 12K
@@ -63,7 +75,7 @@ meta:
   created-by: dry
 ```
 
-## Implementation details
+#### Implementation details
 `dry` tries to pull the inputs of the command by tracing the syscalls that are executed. This is done via the
 `ptrace` API, also used by the `strace` tool. As the API is quite clunky on older kernels, `dry` requires Linux 
 5.3 or above. Also, its is developed and tested on x86_64 only. 

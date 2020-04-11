@@ -5,13 +5,13 @@ use log::trace;
 use sha2::Digest;
 use sha2::Sha256;
 
-use dry;
-use dry::enhanced_tracer::EnhancedEvent;
-use dry::enhanced_tracer::EnhancedEventKind;
-use dry::enhanced_tracer::EnhancedTracer;
-use dry::enhanced_tracer::SyscallEnter;
-use dry::enhanced_tracer::SyscallExit;
-use dry::TracingCommand;
+use rtrace::OsError;
+use rtrace::enhanced_tracer::EnhancedEvent;
+use rtrace::enhanced_tracer::EnhancedEventKind;
+use rtrace::enhanced_tracer::EnhancedTracer;
+use rtrace::enhanced_tracer::SyscallEnter;
+use rtrace::enhanced_tracer::SyscallExit;
+use rtrace::TracingCommand;
 
 const CODE_PREFIX: &'static str = r#"
 #include <unistd.h>
@@ -86,7 +86,7 @@ fn compile(c_code: &str, output_path: &std::path::Path) {
     assert!(compiler_exit.success(), "Compiler should compile code");
 }
 
-fn test_exe(c_code: &str) -> impl Iterator<Item=Result<EnhancedEvent, dry::OsError>> {
+fn test_exe(c_code: &str) -> impl Iterator<Item=Result<EnhancedEvent, OsError>> {
     let current_dir = std::path::Path::new(file!())
         .parent()
         .expect("Parent directory must exist");

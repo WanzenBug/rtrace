@@ -18,11 +18,10 @@ use md5::{Digest, Md5};
 use pretty_env_logger;
 use serde::Serialize;
 
-use dry;
-use dry::OsError;
-use dry::ProcessEventKind;
-use dry::StoppedProcess;
-use dry::TracingCommand;
+use rtrace::OsError;
+use rtrace::ProcessEventKind;
+use rtrace::StoppedProcess;
+use rtrace::TracingCommand;
 
 type DryError = Box<dyn Error + Send + Sync + 'static>;
 
