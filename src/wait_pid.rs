@@ -102,10 +102,10 @@ impl WaitPID {
 
         let msg = p_trace_get_event_message(source_pid)?;
 
-        return Ok(WaitPID::PTraceEvent {
+        Ok(WaitPID::PTraceEvent {
             pid: source_pid,
             message: msg,
             kind: event_kind,
-        });
+        })
     }
 }

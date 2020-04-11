@@ -142,11 +142,8 @@ impl<'a> StoppedProcess<'a> {
 
 impl<'a> Drop for StoppedProcess<'a> {
     fn drop(&mut self) {
-        match self.state {
-            StoppedProcessState::PTraceStop => {
-                let _ = p_trace_syscall(self.id(), self.pending_signal());
-            }
-            _ => (),
+        if let StoppedProcessState::PTraceStop = self.state {
+            let _ = p_trace_syscall(self.id(), self.pending_signal());
         }
     }
 }

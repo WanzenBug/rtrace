@@ -139,13 +139,13 @@ fn p_trace_become_tracer_via_attach(pid: pid_t, options: c_int) -> Result<(), Os
     loop {
         let (_pid, status) = wait_pid(pid, 0)?;
         if !status.stopped() {
-            Err(OsError::new(
+            return Err(OsError::new(
                 ErrorKind::Other,
                 format!(
                     "Got unexpected event from child before attach was completed: {:?}",
                     status
                 ),
-            ))?
+            ));
         }
 
         match status.stop_signal() {
@@ -215,35 +215,35 @@ pub fn get_syscall_number(child_pid: pid_t) -> Result<i64, OsError> {
 pub struct WaitPIDStatus(pub c_int);
 
 impl WaitPIDStatus {
-    pub fn exited(&self) -> bool {
+    pub fn exited(self) -> bool {
         unsafe { libc::WIFEXITED(self.0) }
     }
 
-    pub fn exit_status(&self) -> i32 {
+    pub fn exit_status(self) -> i32 {
         unsafe { libc::WEXITSTATUS(self.0) }
     }
 
-    pub fn signaled(&self) -> bool {
+    pub fn signaled(self) -> bool {
         unsafe { libc::WIFSIGNALED(self.0) }
     }
 
-    pub fn termination_signal(&self) -> i32 {
+    pub fn termination_signal(self) -> i32 {
         unsafe { libc::WTERMSIG(self.0) }
     }
 
-    pub fn stopped(&self) -> bool {
+    pub fn stopped(self) -> bool {
         unsafe { libc::WIFSTOPPED(self.0) }
     }
 
-    pub fn stop_signal(&self) -> i32 {
+    pub fn stop_signal(self) -> i32 {
         unsafe { libc::WSTOPSIG(self.0) }
     }
 
-    pub fn syscalled(&self) -> bool {
+    pub fn syscalled(self) -> bool {
         unsafe { libc::WSTOPSIG(self.0) == (libc::SIGTRAP | 0x80) }
     }
 
-    pub fn ptrace_event(&self) -> i32 {
+    pub fn ptrace_event(self) -> i32 {
         self.0 >> 16
     }
 }
@@ -364,10 +364,10 @@ pub fn safe_process_vm_readv(
     process_address: *const c_void,
 ) -> Result<usize, OsError> {
     if dest.len() > *PAGESIZE {
-        Err(OsError::new(
+        return Err(OsError::new(
             ErrorKind::Other,
             "Reading of buffers bigger than the page size currently not supported",
-        ))?
+        ));
     }
 
     let base_page = process_address as usize & !(*PAGESIZE - 1);

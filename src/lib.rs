@@ -162,10 +162,12 @@ impl TracingCommand for Command {
 
         match next_syscall(child_pid)? {
             libc::SYS_close => debug!("Got SYS_close exit"),
-            x => Err(OsError::new(
-                ErrorKind::Other,
-                format!("Expected syscall to be close() exit, got {} instead", x),
-            ))?,
+            x => {
+                return Err(OsError::new(
+                    ErrorKind::Other,
+                    format!("Expected syscall to be close() exit, got {} instead", x),
+                ))
+            }
         }
 
         debug!("All synced up, the next syscall events have to be 'enter' events");
@@ -180,10 +182,12 @@ impl TracingCommand for Command {
 fn next_syscall(child_pid: libc::pid_t) -> Result<i64, OsError> {
     match WaitPID::from_process(child_pid)? {
         WaitPID::SysCall { .. } => (),
-        x => Err(OsError::new(
-            ErrorKind::Other,
-            format!("Expected syscall event, got {:?} instead", x),
-        ))?,
+        x => {
+            return Err(OsError::new(
+                ErrorKind::Other,
+                format!("Expected syscall event, got {:?} instead", x),
+            ))
+        }
     }
     let number = get_syscall_number(child_pid)?;
     p_trace_syscall(child_pid, None)?;
