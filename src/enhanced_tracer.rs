@@ -54,7 +54,7 @@ pub enum SyscallEnter {
     },
     SchedYield,
     Exit {
-        code: i32
+        code: i32,
     },
     ExitGroup {
         code: i32,
@@ -85,29 +85,50 @@ pub enum SyscallExit {
 
 #[derive(Debug)]
 pub enum SyscallReturnValue {
-    Open { file_descriptor: i32 }
+    Open { file_descriptor: i32 },
 }
 
 impl RawTraceEventHandler for EnhancedTracer {
     type IterationItem = EnhancedEvent;
     type Error = OsError;
 
-    fn handle(&mut self, mut stop_event: StoppedProcess) -> Result<Option<Self::IterationItem>, Self::Error> {
+    fn handle(
+        &mut self,
+        mut stop_event: StoppedProcess,
+    ) -> Result<Option<Self::IterationItem>, Self::Error> {
         let ev = stop_event.event()?;
 
         let kind = match ev.kind() {
-            ProcessEventKind::SyscallEnter { syscall_number, args } => {
-                let syscall_info = SyscallEnter::from_stopped_process(&mut stop_event, *syscall_number, *args)?;
+            ProcessEventKind::SyscallEnter {
+                syscall_number,
+                args,
+            } => {
+                let syscall_info =
+                    SyscallEnter::from_stopped_process(&mut stop_event, *syscall_number, *args)?;
                 if let Some(x) = self.process_tracker.insert(ev.pid, syscall_info.clone()) {
-                    return Err(OsError::new(ErrorKind::Other, format!("Expected no previous entry for process {}, got {:?}", ev.pid, x)));
+                    return Err(OsError::new(
+                        ErrorKind::Other,
+                        format!(
+                            "Expected no previous entry for process {}, got {:?}",
+                            ev.pid, x
+                        ),
+                    ));
                 }
                 EnhancedEventKind::SyscallEnter(syscall_info)
             }
-            ProcessEventKind::SyscallExit { is_error, return_val } => {
+            ProcessEventKind::SyscallExit {
+                is_error,
+                return_val,
+            } => {
                 let enter_info = self.process_tracker.remove(&ev.pid)
                     .ok_or_else(|| OsError::new(ErrorKind::Other, format!("Got syscall exit event without stored enter information for process {}", ev.pid)))?;
 
-                let exit_info = SyscallExit::from_stopped_process(&mut stop_event, enter_info, *is_error, *return_val)?;
+                let exit_info = SyscallExit::from_stopped_process(
+                    &mut stop_event,
+                    enter_info,
+                    *is_error,
+                    *return_val,
+                )?;
                 EnhancedEventKind::SyscallExit(exit_info)
             }
             ProcessEventKind::Event { .. } => {
@@ -129,7 +150,11 @@ impl RawTraceEventHandler for EnhancedTracer {
 
 impl SyscallEnter {
     #[cfg(target_arch = "x86_64")]
-    fn from_stopped_process(process: &mut StoppedProcess, number: u64, args: [u64; 6]) -> Result<Self, OsError> {
+    fn from_stopped_process(
+        process: &mut StoppedProcess,
+        number: u64,
+        args: [u64; 6],
+    ) -> Result<Self, OsError> {
         let kind = match number {
             2 => {
                 let path = process.read_os_string_in_child_vm(args[0] as *const c_void)?;
@@ -148,28 +173,30 @@ impl SyscallEnter {
                     environ: Arc::new(Vec::new()),
                 }
             }
-            60 => SyscallEnter::Exit { code: args[0] as i32 },
-            231 => SyscallEnter::ExitGroup { code: args[0] as i32 },
-            234 => {
-                SyscallEnter::TGKill {
-                    group_id: args[0] as i32,
-                    thread_id: args[1] as i32,
-                    signal: args[3] as i32,
-                }
-            }
-            x => {
-                SyscallEnter::Unknown {
-                    number: x,
-                    args,
-                }
-            }
+            60 => SyscallEnter::Exit {
+                code: args[0] as i32,
+            },
+            231 => SyscallEnter::ExitGroup {
+                code: args[0] as i32,
+            },
+            234 => SyscallEnter::TGKill {
+                group_id: args[0] as i32,
+                thread_id: args[1] as i32,
+                signal: args[3] as i32,
+            },
+            x => SyscallEnter::Unknown { number: x, args },
         };
         Ok(kind)
     }
 }
 
 impl SyscallExit {
-    fn from_stopped_process(_process: &mut StoppedProcess, enter_call: SyscallEnter, is_error: bool, return_value: i64) -> Result<Result<Self, OsError>, OsError> {
+    fn from_stopped_process(
+        _process: &mut StoppedProcess,
+        enter_call: SyscallEnter,
+        is_error: bool,
+        return_value: i64,
+    ) -> Result<Result<Self, OsError>, OsError> {
         use SyscallEnter::*;
         if is_error {
             return Ok(Err(OsError::from_raw_os_error(-return_value as i32)));

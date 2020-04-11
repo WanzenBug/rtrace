@@ -1,5 +1,5 @@
-pub use std::io::Error as OsError;
 use std::collections::HashMap;
+pub use std::io::Error as OsError;
 use std::io::ErrorKind;
 use std::process::Command;
 
@@ -9,26 +9,25 @@ use log::trace;
 
 pub use crate::event::ProcessEvent;
 pub use crate::event::ProcessEventKind;
-pub use crate::wait_pid::PTraceEventKind;
 pub use crate::process::StoppedProcess;
-use crate::raw::ChildState;
 use crate::raw::get_syscall_number;
 use crate::raw::p_trace_become_tracer;
 use crate::raw::p_trace_syscall;
+use crate::raw::ChildState;
+pub use crate::wait_pid::PTraceEventKind;
 use crate::wait_pid::WaitPID;
 
 mod command_ext;
+pub mod enhanced_tracer;
 mod event;
 mod process;
 mod raw;
 mod wait_pid;
-pub mod enhanced_tracer;
 
 pub struct TracedChildTree {
     _child: libc::pid_t,
     child_states: HashMap<pid_t, ChildState>,
 }
-
 
 pub struct TracedChildTreeIter<H> {
     tree: TracedChildTree,
@@ -43,14 +42,24 @@ pub trait RawTraceEventHandler {
     type IterationItem;
     type Error: From<OsError>;
 
-    fn handle(&mut self, stop_event: StoppedProcess) -> Result<Option<Self::IterationItem>, Self::Error>;
+    fn handle(
+        &mut self,
+        stop_event: StoppedProcess,
+    ) -> Result<Option<Self::IterationItem>, Self::Error>;
 }
 
-impl<F, E, R> RawTraceEventHandler for F where F: FnMut(StoppedProcess) -> Result<Option<R>, E>, E: From<OsError> {
+impl<F, E, R> RawTraceEventHandler for F
+where
+    F: FnMut(StoppedProcess) -> Result<Option<R>, E>,
+    E: From<OsError>,
+{
     type IterationItem = R;
     type Error = E;
 
-    fn handle(&mut self, stop_event: StoppedProcess) -> Result<Option<Self::IterationItem>, Self::Error> {
+    fn handle(
+        &mut self,
+        stop_event: StoppedProcess,
+    ) -> Result<Option<Self::IterationItem>, Self::Error> {
         (self)(stop_event)
     }
 }
@@ -101,7 +110,6 @@ impl TracingCommand for Command {
         // The last possibility is that we used PTRACE_ATTACH, which will skip exit events of
         // in-progress system calls.
 
-
         // Observe all close() system calls (possibility 1/2) until a read() is encountered
         loop {
             match next_syscall(child_pid)? {
@@ -115,7 +123,13 @@ impl TracingCommand for Command {
                     continue;
                 }
                 x => {
-                    return Err(OsError::new(ErrorKind::Other, format!("Expected syscall to be read() or close(), got {} instead", x)));
+                    return Err(OsError::new(
+                        ErrorKind::Other,
+                        format!(
+                            "Expected syscall to be read() or close(), got {} instead",
+                            x
+                        ),
+                    ));
                 }
             }
         }
@@ -132,17 +146,26 @@ impl TracingCommand for Command {
                 libc::SYS_read => {
                     debug!("Got expected read() call");
                     debug!("Continuing until close() call is observed");
-                    continue
+                    continue;
                 }
                 x => {
-                    return Err(OsError::new(ErrorKind::Other, format!("Expected syscall to be read() or close(), got {} instead", x)));
+                    return Err(OsError::new(
+                        ErrorKind::Other,
+                        format!(
+                            "Expected syscall to be read() or close(), got {} instead",
+                            x
+                        ),
+                    ));
                 }
             }
         }
 
         match next_syscall(child_pid)? {
             libc::SYS_close => debug!("Got SYS_close exit"),
-            x => Err(OsError::new(ErrorKind::Other, format!("Expected syscall to be close() exit, got {} instead", x)))?,
+            x => Err(OsError::new(
+                ErrorKind::Other,
+                format!("Expected syscall to be close() exit, got {} instead", x),
+            ))?,
         }
 
         debug!("All synced up, the next syscall events have to be 'enter' events");
@@ -157,7 +180,10 @@ impl TracingCommand for Command {
 fn next_syscall(child_pid: libc::pid_t) -> Result<i64, OsError> {
     match WaitPID::from_process(child_pid)? {
         WaitPID::SysCall { .. } => (),
-        x => Err(OsError::new(ErrorKind::Other, format!("Expected syscall event, got {:?} instead", x)))?,
+        x => Err(OsError::new(
+            ErrorKind::Other,
+            format!("Expected syscall event, got {:?} instead", x),
+        ))?,
     }
     let number = get_syscall_number(child_pid)?;
     p_trace_syscall(child_pid, None)?;
@@ -165,7 +191,7 @@ fn next_syscall(child_pid: libc::pid_t) -> Result<i64, OsError> {
 }
 
 impl TracedChildTree {
-    pub fn on_process_event<H>(self, handler: H) -> TracedChildTreeIter<H>  {
+    pub fn on_process_event<H>(self, handler: H) -> TracedChildTreeIter<H> {
         TracedChildTreeIter {
             tree: self,
             handler,
@@ -180,7 +206,10 @@ impl TracedChildTree {
     }
 }
 
-impl<H> Iterator for TracedChildTreeIter<H> where H: RawTraceEventHandler {
+impl<H> Iterator for TracedChildTreeIter<H>
+where
+    H: RawTraceEventHandler,
+{
     type Item = Result<H::IterationItem, H::Error>;
 
     fn next(&mut self) -> Option<Self::Item> {

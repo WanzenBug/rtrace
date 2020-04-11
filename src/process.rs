@@ -3,16 +3,16 @@ use std::fmt::Formatter;
 use std::os::raw::{c_int, c_void};
 
 use crate::event::ProcessEventKind;
-use crate::OsError;
-use crate::ProcessEvent;
-use crate::raw::{ChildState, safe_process_vm_readv};
 use crate::raw::get_syscall_event_legacy;
 use crate::raw::p_trace_cont;
 use crate::raw::p_trace_detach;
 use crate::raw::p_trace_syscall;
-use crate::TracedChildTree;
+use crate::raw::{safe_process_vm_readv, ChildState};
 use crate::wait_pid::WaitPID;
-use std::ffi::{OsString, OsStr};
+use crate::OsError;
+use crate::ProcessEvent;
+use crate::TracedChildTree;
+use std::ffi::{OsStr, OsString};
 
 pub struct StoppedProcess<'a> {
     state: StoppedProcessState,
@@ -52,21 +52,27 @@ impl<'a> StoppedProcess<'a> {
         let pid = self.id();
         let event = match self.wait_pid {
             Exited { exit_status, .. } => ProcessEventKind::ExitNormally(exit_status),
-            Terminated { termination_signal, .. } => ProcessEventKind::ExitSignal(termination_signal),
+            Terminated {
+                termination_signal, ..
+            } => ProcessEventKind::ExitSignal(termination_signal),
             SysCall { .. } => {
-                let state = self.tracer.child_states.entry(pid).or_insert(ChildState::UserSpace);
+                let state = self
+                    .tracer
+                    .child_states
+                    .entry(pid)
+                    .or_insert(ChildState::UserSpace);
                 let (sysinfo, new_child_state) = get_syscall_event_legacy(pid, *state)?;
                 *state = new_child_state;
                 sysinfo
             }
-            PTraceEvent { message, kind, .. } => ProcessEventKind::Event { event_pid: message as u32, kind },
+            PTraceEvent { message, kind, .. } => ProcessEventKind::Event {
+                event_pid: message as u32,
+                kind,
+            },
             Signal { signal, .. } => ProcessEventKind::SignalDelivery(signal),
         };
 
-        Ok(ProcessEvent {
-            pid,
-            event,
-        })
+        Ok(ProcessEvent { pid, event })
     }
 
     pub fn detach(mut self) -> Result<(), OsError> {
@@ -100,14 +106,21 @@ impl<'a> StoppedProcess<'a> {
         }
     }
 
-    pub fn read_in_child_vm(&self, dest: &mut [u8], address: *const c_void) -> Result<usize, OsError> {
+    pub fn read_in_child_vm(
+        &self,
+        dest: &mut [u8],
+        address: *const c_void,
+    ) -> Result<usize, OsError> {
         safe_process_vm_readv(self.id(), dest, address)
     }
 
     pub fn read_os_string_in_child_vm(&self, address: *const c_void) -> Result<OsString, OsError> {
         let mut filepath_buffer = [0; 4096];
         let n = self.read_in_child_vm(&mut filepath_buffer, address)?;
-        let string_size =  filepath_buffer.iter().position(|b| *b == b'\0').unwrap_or(n);
+        let string_size = filepath_buffer
+            .iter()
+            .position(|b| *b == b'\0')
+            .unwrap_or(n);
         use std::os::unix::ffi::OsStrExt;
         Ok(OsStr::from_bytes(&filepath_buffer[..string_size]).to_os_string())
     }
@@ -115,8 +128,7 @@ impl<'a> StoppedProcess<'a> {
     pub fn from_wait_pid(tracer: &'a mut TracedChildTree, wait_pid: WaitPID) -> Self {
         use WaitPID::*;
         let state = match wait_pid {
-            Exited { .. }
-            | Terminated { .. } => StoppedProcessState::Exited,
+            Exited { .. } | Terminated { .. } => StoppedProcessState::Exited,
             _ => StoppedProcessState::PTraceStop,
         };
 

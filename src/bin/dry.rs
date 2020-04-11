@@ -7,8 +7,8 @@ use std::io::copy;
 use std::io::ErrorKind;
 use std::os::raw::c_void;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::process::exit;
+use std::process::Command;
 
 use log::debug;
 use log::error;
@@ -42,9 +42,7 @@ fn main() {
 
 fn run() -> Result<(), DryError> {
     let (dvc_file, cmd) = parse()?;
-    let tracees = Command::new(&cmd[0])
-        .args(&cmd[1..])
-        .spawn_with_tracing()?;
+    let tracees = Command::new(&cmd[0]).args(&cmd[1..]).spawn_with_tracing()?;
 
     let repo_root = Path::new(".").canonicalize()?;
 
@@ -108,12 +106,14 @@ fn run() -> Result<(), DryError> {
             Operation::Read => deps.push(DvcDeps {
                 path: string_path,
                 md5: digest,
-            })
+            }),
         }
     }
 
     let own_cmd = format!("dry run -f {}", dvc_file);
-    let meta = vec![("created-by".to_string(), "dry".to_string())].into_iter().collect();
+    let meta = vec![("created-by".to_string(), "dry".to_string())]
+        .into_iter()
+        .collect();
     let mut dvc_result = DvcStage {
         cmd: format!("{} {}", own_cmd, cmd.join(" ")),
         deps,
@@ -130,7 +130,8 @@ fn run() -> Result<(), DryError> {
     Ok(())
 }
 
-fn filter_successful_syscall() -> impl FnMut(StoppedProcess) -> Result<Option<Vec<FileOperation>>, OsError> {
+fn filter_successful_syscall(
+) -> impl FnMut(StoppedProcess) -> Result<Option<Vec<FileOperation>>, OsError> {
     let mut syscall_memory: HashMap<i32, Vec<FileOperation>> = HashMap::new();
 
     move |mut process| {
@@ -138,19 +139,25 @@ fn filter_successful_syscall() -> impl FnMut(StoppedProcess) -> Result<Option<Ve
         use ProcessEventKind::*;
         let ev = process.event()?;
         let ops = match ev.kind() {
-            SyscallEnter { syscall_number, args } => {
+            SyscallEnter {
+                syscall_number,
+                args,
+            } => {
                 let ops = FileOperation::from_syscall(&process, *syscall_number, *args)?;
-                let entry = syscall_memory.entry(process.id())
-                    .or_default();
+                let entry = syscall_memory.entry(process.id()).or_default();
                 if entry.len() != 0 {
-                    warn!("Child process has stored {} file operations when there should not be any", process.id());
+                    warn!(
+                        "Child process has stored {} file operations when there should not be any",
+                        process.id()
+                    );
                 }
                 entry.extend(ops);
                 None
             }
-            SyscallExit { is_error: false, .. } => {
-                let ret = syscall_memory.entry(process.id())
-                    .or_default();
+            SyscallExit {
+                is_error: false, ..
+            } => {
+                let ret = syscall_memory.entry(process.id()).or_default();
                 if ret.len() == 0 {
                     None
                 } else {
@@ -201,14 +208,12 @@ fn parse() -> Result<(String, Vec<String>), DryError> {
     Ok((dvc_file, cmd))
 }
 
-
 fn file_digest(path: &Path) -> Result<String, DryError> {
     let mut digest = Md5::new();
     let mut file = File::open(path)?;
     copy(&mut file, &mut digest)?;
     Ok(hex::encode(&digest.result()[..]))
 }
-
 
 fn calc_stage_md5(stage: &DvcStage) -> Result<String, DryError> {
     #[derive(Debug, Serialize)]
@@ -221,8 +226,10 @@ fn calc_stage_md5(stage: &DvcStage) -> Result<String, DryError> {
     struct PythonFormatter;
 
     impl serde_json::ser::Formatter for PythonFormatter {
-        fn begin_array_value<W>(&mut self, writer: &mut W, first: bool) -> std::io::Result<()> where
-            W: ?Sized + std::io::Write, {
+        fn begin_array_value<W>(&mut self, writer: &mut W, first: bool) -> std::io::Result<()>
+        where
+            W: ?Sized + std::io::Write,
+        {
             if first {
                 Ok(())
             } else {
@@ -230,8 +237,10 @@ fn calc_stage_md5(stage: &DvcStage) -> Result<String, DryError> {
             }
         }
 
-        fn begin_object_key<W>(&mut self, writer: &mut W, first: bool) -> std::io::Result<()> where
-            W: ?Sized + std::io::Write, {
+        fn begin_object_key<W>(&mut self, writer: &mut W, first: bool) -> std::io::Result<()>
+        where
+            W: ?Sized + std::io::Write,
+        {
             if first {
                 Ok(())
             } else {
@@ -239,8 +248,10 @@ fn calc_stage_md5(stage: &DvcStage) -> Result<String, DryError> {
             }
         }
 
-        fn begin_object_value<W>(&mut self, writer: &mut W) -> std::io::Result<()> where
-            W: ?Sized + std::io::Write, {
+        fn begin_object_value<W>(&mut self, writer: &mut W) -> std::io::Result<()>
+        where
+            W: ?Sized + std::io::Write,
+        {
             writer.write_all(b": ")
         }
     }
@@ -259,7 +270,10 @@ fn calc_stage_md5(stage: &DvcStage) -> Result<String, DryError> {
         to_consider.serialize(&mut serializer)?;
         to_consider.serialize(&mut serializer2)?;
     }
-    trace!("File hashed as: {}", std::str::from_utf8(&pr).unwrap_or("Error converting to json"));
+    trace!(
+        "File hashed as: {}",
+        std::str::from_utf8(&pr).unwrap_or("Error converting to json")
+    );
     let res = digest.result();
     Ok(hex::encode(&res[..]))
 }
@@ -299,7 +313,11 @@ enum Operation {
 }
 
 impl FileOperation {
-    fn from_syscall(process: &StoppedProcess, syscall_number: u64, args: [u64; 6]) -> Result<Vec<Self>, OsError> {
+    fn from_syscall(
+        process: &StoppedProcess,
+        syscall_number: u64,
+        args: [u64; 6],
+    ) -> Result<Vec<Self>, OsError> {
         debug!("Decoding syscall: # {}, args: {:?}", syscall_number, args);
         match syscall_number as i64 {
             libc::SYS_execve => {
@@ -327,7 +345,10 @@ impl FileOperation {
             libc::SYS_openat => {
                 debug!("Entered SYS_openat");
                 if args[0] as i32 != libc::AT_FDCWD {
-                    Err(OsError::new(ErrorKind::Other, "Currently all 'at' syscalls only support the special AT_FDCWD flag"))?
+                    Err(OsError::new(
+                        ErrorKind::Other,
+                        "Currently all 'at' syscalls only support the special AT_FDCWD flag",
+                    ))?
                 }
                 let location = process.read_os_string_in_child_vm(args[1] as *const c_void)?;
                 let flags = args[2] as i32;
@@ -341,8 +362,10 @@ impl FileOperation {
                     operation,
                 }])
             }
-            libc::SYS_chdir
-            | libc::SYS_fchdir => Err(OsError::new(ErrorKind::Other, "Currently changing directories is not tracked correctly"))?,
+            libc::SYS_chdir | libc::SYS_fchdir => Err(OsError::new(
+                ErrorKind::Other,
+                "Currently changing directories is not tracked correctly",
+            ))?,
             _ => Ok(Vec::new()),
         }
     }

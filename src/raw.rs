@@ -1,20 +1,22 @@
 use std::fmt::Debug;
 use std::io::ErrorKind;
-use std::mem::MaybeUninit;
 use std::mem::size_of;
-use std::os::raw::{c_int, c_ulong, c_ulonglong};
+use std::mem::MaybeUninit;
 use std::os::raw::c_long;
 use std::os::raw::c_void;
+use std::os::raw::{c_int, c_ulong, c_ulonglong};
 use std::ptr::null_mut;
 
-use libc::_SC_PAGESIZE;
 use libc::close;
 use libc::iovec;
-use libc::O_CLOEXEC;
 use libc::pid_t;
 use libc::pipe2;
 use libc::process_vm_readv;
 use libc::ptrace;
+use libc::read;
+use libc::sysconf;
+use libc::waitpid;
+use libc::O_CLOEXEC;
 use libc::PTRACE_ATTACH;
 use libc::PTRACE_CONT;
 use libc::PTRACE_DETACH;
@@ -23,9 +25,7 @@ use libc::PTRACE_INTERRUPT;
 use libc::PTRACE_SEIZE;
 use libc::PTRACE_SETOPTIONS;
 use libc::PTRACE_SYSCALL;
-use libc::read;
-use libc::sysconf;
-use libc::waitpid;
+use libc::_SC_PAGESIZE;
 use log::debug;
 use log::trace;
 use once_cell::sync::Lazy;
@@ -39,7 +39,8 @@ pub type PTraceRequest = libc::c_uint;
 pub fn wait_pid(pid: pid_t, options: c_int) -> Result<(pid_t, WaitPIDStatus), OsError> {
     let mut status = 0;
 
-    let pid = unsafe { check_ret_with_retry(|| waitpid(pid, &mut status as *mut c_int, options), -1) }?;
+    let pid =
+        unsafe { check_ret_with_retry(|| waitpid(pid, &mut status as *mut c_int, options), -1) }?;
     Ok((pid, WaitPIDStatus(status)))
 }
 
@@ -62,16 +63,17 @@ static IS_P_TRACE_SEIZE_SUPPORTED: Lazy<bool> = Lazy::new(|| {
     // Inspired by strace:
     // https://github.com/strace/strace/blob/d9b459ca120136efa5515064b56f13f8b8ed2022/strace.c#L1641
 
-    let child_pid = match unsafe { fork() }.expect("Cannot fork() to determine PTRACE_SEIZE support") {
-        ForkResult::Child => {
-            // Child process, just pause and exit...
-            unsafe {
-                libc::pause();
-                libc::_exit(0);
+    let child_pid =
+        match unsafe { fork() }.expect("Cannot fork() to determine PTRACE_SEIZE support") {
+            ForkResult::Child => {
+                // Child process, just pause and exit...
+                unsafe {
+                    libc::pause();
+                    libc::_exit(0);
+                }
             }
-        }
-        ForkResult::Parent { child_pid } => child_pid,
-    };
+            ForkResult::Parent { child_pid } => child_pid,
+        };
 
     let seize_works = match unsafe { p_trace(PTRACE_SEIZE, child_pid, None, None) } {
         Ok(_) => true,
@@ -119,7 +121,13 @@ fn p_trace_become_tracer_via_seize(pid: pid_t, options: c_int) -> Result<(), OsE
     match status.ptrace_event() {
         // NB: not exported by libc right now
         128 => Ok(()),
-        x => Err(OsError::new(ErrorKind::Other, format!("Got unexpected trace event {}, expected PTRACE_EVENT_STOP (128)", x))),
+        x => Err(OsError::new(
+            ErrorKind::Other,
+            format!(
+                "Got unexpected trace event {}, expected PTRACE_EVENT_STOP (128)",
+                x
+            ),
+        )),
     }
 }
 
@@ -131,7 +139,13 @@ fn p_trace_become_tracer_via_attach(pid: pid_t, options: c_int) -> Result<(), Os
     loop {
         let (_pid, status) = wait_pid(pid, 0)?;
         if !status.stopped() {
-            Err(OsError::new(ErrorKind::Other, format!("Got unexpected event from child before attach was completed: {:?}", status)))?
+            Err(OsError::new(
+                ErrorKind::Other,
+                format!(
+                    "Got unexpected event from child before attach was completed: {:?}",
+                    status
+                ),
+            ))?
         }
 
         match status.stop_signal() {
@@ -152,19 +166,41 @@ fn p_trace_become_tracer_via_attach(pid: pid_t, options: c_int) -> Result<(), Os
 
 pub fn p_trace_get_event_message(pid: pid_t) -> Result<c_ulong, OsError> {
     let mut message = 0;
-    unsafe { p_trace(PTRACE_GETEVENTMSG, pid, None, Some(&mut message as *mut c_ulong as *mut c_void)) }?;
+    unsafe {
+        p_trace(
+            PTRACE_GETEVENTMSG,
+            pid,
+            None,
+            Some(&mut message as *mut c_ulong as *mut c_void),
+        )
+    }?;
     Ok(message)
 }
 
-unsafe fn p_trace(req: PTraceRequest, pid: pid_t, addr: Option<*mut c_void>, data: Option<*mut c_void>) -> Result<c_long, OsError> {
-    let x = check_ret(move || ptrace(req, pid, addr.unwrap_or(null_mut()), data.unwrap_or(null_mut())), -1)?;
+unsafe fn p_trace(
+    req: PTraceRequest,
+    pid: pid_t,
+    addr: Option<*mut c_void>,
+    data: Option<*mut c_void>,
+) -> Result<c_long, OsError> {
+    let x = check_ret(
+        move || {
+            ptrace(
+                req,
+                pid,
+                addr.unwrap_or(null_mut()),
+                data.unwrap_or(null_mut()),
+            )
+        },
+        -1,
+    )?;
     Ok(x)
 }
 
 pub unsafe fn fork() -> Result<ForkResult, OsError> {
     match check_ret(move || libc::fork(), -1)? {
         0 => Ok(ForkResult::Child),
-        child_pid => Ok(ForkResult::Parent { child_pid })
+        child_pid => Ok(ForkResult::Parent { child_pid }),
     }
 }
 
@@ -212,7 +248,6 @@ impl WaitPIDStatus {
     }
 }
 
-
 #[derive(Debug, Copy, Clone)]
 pub enum ChildState {
     UserSpace,
@@ -228,20 +263,35 @@ pub fn get_registers(pid: pid_t) -> Result<UserRegs, OsError> {
         iov_len: size,
     };
     let regs = unsafe {
-        p_trace(libc::PTRACE_GETREGSET, pid, Some(1 as *mut c_void), Some(&mut iovec as *mut iovec as *mut c_void))?;
+        p_trace(
+            libc::PTRACE_GETREGSET,
+            pid,
+            Some(1 as *mut c_void),
+            Some(&mut iovec as *mut iovec as *mut c_void),
+        )?;
         regs.assume_init()
     };
 
     unsafe {
         match (iovec.iov_len, regs) {
-            (size, UserRegsUnion { x86 }) if size == size_of::<UserRegsX86>() => Ok(UserRegs::X86(x86)),
-            (size, UserRegsUnion { amd64 }) if size == size_of::<UserRegsAMD64>() => Ok(UserRegs::AMD64(amd64)),
-            _ => Err(OsError::new(ErrorKind::Other, "Got unexpected size of payload for PTRACE_GETREGSET")),
+            (size, UserRegsUnion { x86 }) if size == size_of::<UserRegsX86>() => {
+                Ok(UserRegs::X86(x86))
+            }
+            (size, UserRegsUnion { amd64 }) if size == size_of::<UserRegsAMD64>() => {
+                Ok(UserRegs::AMD64(amd64))
+            }
+            _ => Err(OsError::new(
+                ErrorKind::Other,
+                "Got unexpected size of payload for PTRACE_GETREGSET",
+            )),
         }
     }
 }
 
-pub fn get_syscall_event_legacy(pid: pid_t, state: ChildState) -> Result<(ProcessEventKind, ChildState), OsError> {
+pub fn get_syscall_event_legacy(
+    pid: pid_t,
+    state: ChildState,
+) -> Result<(ProcessEventKind, ChildState), OsError> {
     let (syscall_number, args, ret_val) = match get_registers(pid)? {
         UserRegs::X86(x86) => unimplemented!("Decoding for x86 not implemented yet! {:?}", x86),
         UserRegs::AMD64(amd64) => (
@@ -274,7 +324,6 @@ pub fn get_syscall_event_legacy(pid: pid_t, state: ChildState) -> Result<(Proces
     }
 }
 
-
 pub unsafe fn pipe() -> Result<(c_int, c_int), OsError> {
     let mut result = [0, 0];
     check_ret(|| pipe2(result.as_mut_ptr(), O_CLOEXEC), -1)?;
@@ -285,7 +334,10 @@ pub unsafe fn read_wait(fd: c_int) -> Result<(), OsError> {
     let mut buf = [0u8];
     match check_ret_with_retry(|| read(fd, buf.as_mut_ptr() as *mut c_void, 1), -1)? {
         0 => Ok(()),
-        _ => Err(OsError::new(ErrorKind::Other, "Read data when there should be nothing to read")),
+        _ => Err(OsError::new(
+            ErrorKind::Other,
+            "Read data when there should be nothing to read",
+        )),
     }
 }
 
@@ -295,16 +347,27 @@ pub unsafe fn fd_close(fd: c_int) -> Result<(), OsError> {
 }
 
 static PAGESIZE: Lazy<usize> = Lazy::new(|| {
-    let pagesize = unsafe { check_ret(|| sysconf(_SC_PAGESIZE), -1) }.expect("Failed to get page size");
+    let pagesize =
+        unsafe { check_ret(|| sysconf(_SC_PAGESIZE), -1) }.expect("Failed to get page size");
     assert!(pagesize >= 1, "pagesize is always positive");
     let pagesize = pagesize as usize;
-    assert!(pagesize.is_power_of_two(), "pagesize must be a power of two");
+    assert!(
+        pagesize.is_power_of_two(),
+        "pagesize must be a power of two"
+    );
     pagesize
 });
 
-pub fn safe_process_vm_readv(pid: pid_t, dest: &mut [u8], process_address: *const c_void) -> Result<usize, OsError> {
+pub fn safe_process_vm_readv(
+    pid: pid_t,
+    dest: &mut [u8],
+    process_address: *const c_void,
+) -> Result<usize, OsError> {
     if dest.len() > *PAGESIZE {
-        Err(OsError::new(ErrorKind::Other, "Reading of buffers bigger than the page size currently not supported"))?
+        Err(OsError::new(
+            ErrorKind::Other,
+            "Reading of buffers bigger than the page size currently not supported",
+        ))?
     }
 
     let base_page = process_address as usize & !(*PAGESIZE - 1);
@@ -313,24 +376,45 @@ pub fn safe_process_vm_readv(pid: pid_t, dest: &mut [u8], process_address: *cons
     let base_page_read_size = cmp::min(next_page - process_address as usize, dest.len());
     let next_page_read_size = dest.len() - base_page_read_size;
 
-    let remote_iovec = [iovec {
-        iov_base: process_address as *mut c_void,
-        iov_len: base_page_read_size,
-    }, iovec {
-        iov_base: next_page as *mut c_void,
-        iov_len: next_page_read_size,
-    }];
+    let remote_iovec = [
+        iovec {
+            iov_base: process_address as *mut c_void,
+            iov_len: base_page_read_size,
+        },
+        iovec {
+            iov_base: next_page as *mut c_void,
+            iov_len: next_page_read_size,
+        },
+    ];
 
     let own_iovec = iovec {
         iov_base: dest.as_mut_ptr() as *mut c_void,
         iov_len: dest.len(),
     };
 
-    let read_bytes = unsafe { check_ret(move || process_vm_readv(pid, &own_iovec as *const iovec, 1, &remote_iovec as *const iovec, 2, 0), -1) }?;
+    let read_bytes = unsafe {
+        check_ret(
+            move || {
+                process_vm_readv(
+                    pid,
+                    &own_iovec as *const iovec,
+                    1,
+                    &remote_iovec as *const iovec,
+                    2,
+                    0,
+                )
+            },
+            -1,
+        )
+    }?;
     Ok(read_bytes as usize)
 }
 
-pub unsafe fn check_ret_with_retry<F, T>(mut func: F, error_code: T) -> Result<T, OsError> where F: FnMut() -> T, T: Eq + Copy + Debug {
+pub unsafe fn check_ret_with_retry<F, T>(mut func: F, error_code: T) -> Result<T, OsError>
+where
+    F: FnMut() -> T,
+    T: Eq + Copy + Debug,
+{
     loop {
         return match check_ret(&mut func, error_code) {
             Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
@@ -339,19 +423,20 @@ pub unsafe fn check_ret_with_retry<F, T>(mut func: F, error_code: T) -> Result<T
     }
 }
 
-pub unsafe fn check_ret<F, T>(func: F, error_code: T) -> Result<T, OsError> where F: FnOnce() -> T, T: Eq + Debug {
+pub unsafe fn check_ret<F, T>(func: F, error_code: T) -> Result<T, OsError>
+where
+    F: FnOnce() -> T,
+    T: Eq + Debug,
+{
     match func() {
         x if x == error_code => Err(OsError::last_os_error()),
         x => Ok(x),
     }
 }
 
-
 pub enum ForkResult {
     Child,
-    Parent {
-        child_pid: pid_t
-    },
+    Parent { child_pid: pid_t },
 }
 
 #[repr(C)]

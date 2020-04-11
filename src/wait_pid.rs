@@ -1,11 +1,11 @@
+use libc::pid_t;
 use std::io::ErrorKind;
 use std::os::raw::c_ulong;
-use libc::pid_t;
 
-use crate::OsError;
 use crate::raw::p_trace_get_event_message;
 use crate::raw::wait_pid;
 use crate::raw::WaitPIDStatus;
+use crate::OsError;
 
 #[derive(Debug, Copy, Clone)]
 pub enum WaitPID {
@@ -42,7 +42,6 @@ pub enum PTraceEventKind {
     Stop,
 }
 
-
 impl WaitPID {
     pub fn from_process(pid: pid_t) -> Result<WaitPID, OsError> {
         let (w_pid, status) = wait_pid(pid, 0)?;
@@ -63,7 +62,10 @@ impl WaitPID {
             });
         }
 
-        assert!(status.stopped(), "Received waitpid() status that is neither WIFEXITED() nor WIFSTOPPED()!");
+        assert!(
+            status.stopped(),
+            "Received waitpid() status that is neither WIFEXITED() nor WIFSTOPPED()!"
+        );
 
         if status.signaled() {
             return Ok(WaitPID::Terminated {
@@ -73,15 +75,15 @@ impl WaitPID {
         }
 
         if status.syscalled() {
-            return Ok(WaitPID::SysCall {
-                pid: source_pid,
-            });
+            return Ok(WaitPID::SysCall { pid: source_pid });
         }
         let event_kind = match status.ptrace_event() {
-            0 => return Ok(WaitPID::Signal {
-                pid: source_pid,
-                signal: status.stop_signal(),
-            }),
+            0 => {
+                return Ok(WaitPID::Signal {
+                    pid: source_pid,
+                    signal: status.stop_signal(),
+                })
+            }
             libc::PTRACE_EVENT_EXEC => PTraceEventKind::Exec,
             libc::PTRACE_EVENT_EXIT => PTraceEventKind::Exit,
             libc::PTRACE_EVENT_FORK => PTraceEventKind::Fork,
@@ -90,7 +92,12 @@ impl WaitPID {
             libc::PTRACE_EVENT_CLONE => PTraceEventKind::Clone,
             // NB: not exported by libc right now
             128 => PTraceEventKind::Stop,
-            x => return Err(OsError::new(ErrorKind::Other, format!("Unknown ptrace event status: {}", x))),
+            x => {
+                return Err(OsError::new(
+                    ErrorKind::Other,
+                    format!("Unknown ptrace event status: {}", x),
+                ))
+            }
         };
 
         let msg = p_trace_get_event_message(source_pid)?;

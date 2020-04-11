@@ -5,14 +5,14 @@ use std::process::Command;
 use libc::pid_t;
 use log::debug;
 
-use crate::OsError;
 use crate::raw::fd_close;
 use crate::raw::fork;
-use crate::raw::ForkResult;
 use crate::raw::pipe;
 use crate::raw::read_wait;
-use std::sync::Mutex;
+use crate::raw::ForkResult;
+use crate::OsError;
 use once_cell::sync::Lazy;
+use std::sync::Mutex;
 
 #[derive(Debug)]
 pub struct WaitingChildGuard {
@@ -23,7 +23,9 @@ pub struct WaitingChildGuard {
 pub trait PreExecStopCommand: CommandExt {
     fn spawn_with_pre_exec_stop(&mut self) -> Result<WaitingChildGuard, OsError>;
 
-    unsafe fn pre_exec<F>(&mut self, f: F) -> &mut Self where F: FnMut() -> Result<(), OsError> + Send + Sync + 'static;
+    unsafe fn pre_exec<F>(&mut self, f: F) -> &mut Self
+    where
+        F: FnMut() -> Result<(), OsError> + Send + Sync + 'static;
 }
 
 static PIPE_FD_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
@@ -73,13 +75,12 @@ impl PreExecStopCommand for Command {
                 Ok(())
             });
 
-
             let child_pid = match fork()? {
                 ForkResult::Child => {
                     let err = self.exec();
                     panic!("Error in fork: {}", err);
                 }
-                ForkResult::Parent { child_pid } => child_pid
+                ForkResult::Parent { child_pid } => child_pid,
             };
             debug!("Process forked, child pid: {}", child_pid);
 
@@ -105,7 +106,10 @@ impl PreExecStopCommand for Command {
         }
     }
 
-    unsafe fn pre_exec<F>(&mut self, f: F) -> &mut Self where F: FnMut() -> Result<(), OsError> + Send + Sync + 'static {
+    unsafe fn pre_exec<F>(&mut self, f: F) -> &mut Self
+    where
+        F: FnMut() -> Result<(), OsError> + Send + Sync + 'static,
+    {
         CommandExt::pre_exec(self, f)
     }
 }

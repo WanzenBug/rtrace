@@ -5,12 +5,12 @@ use log::trace;
 use sha2::Digest;
 use sha2::Sha256;
 
-use rtrace::OsError;
 use rtrace::enhanced_tracer::EnhancedEvent;
 use rtrace::enhanced_tracer::EnhancedEventKind;
 use rtrace::enhanced_tracer::EnhancedTracer;
 use rtrace::enhanced_tracer::SyscallEnter;
 use rtrace::enhanced_tracer::SyscallExit;
+use rtrace::OsError;
 use rtrace::TracingCommand;
 
 const CODE_PREFIX: &'static str = r#"
@@ -54,7 +54,6 @@ macro_rules! assert_iteration_end {
     };
 }
 
-
 fn compile(c_code: &str, output_path: &std::path::Path) {
     trace!("Creating executable at: {}", output_path.display());
     let tool = cc::Build::new()
@@ -68,7 +67,8 @@ fn compile(c_code: &str, output_path: &std::path::Path) {
 
     assert!(tool.is_like_gnu() || tool.is_like_clang());
 
-    let mut compiler_invocation = tool.to_command()
+    let mut compiler_invocation = tool
+        .to_command()
         .arg("-o")
         .arg(output_path)
         .arg("-x")
@@ -80,18 +80,21 @@ fn compile(c_code: &str, output_path: &std::path::Path) {
 
     trace!("Writing code: {}", c_code);
     let mut code_pipe = compiler_invocation.stdin.take().expect("Stdin is piped");
-    code_pipe.write_all(c_code.as_bytes()).expect("Pipe write to succeed");
+    code_pipe
+        .write_all(c_code.as_bytes())
+        .expect("Pipe write to succeed");
     drop(code_pipe);
     let compiler_exit = compiler_invocation.wait().expect("Compiler should finish");
     assert!(compiler_exit.success(), "Compiler should compile code");
 }
 
-fn test_exe(c_code: &str) -> impl Iterator<Item=Result<EnhancedEvent, OsError>> {
+fn test_exe(c_code: &str) -> impl Iterator<Item = Result<EnhancedEvent, OsError>> {
     let current_dir = std::path::Path::new(file!())
         .parent()
         .expect("Parent directory must exist");
     let test_exe_directory = current_dir.join("test_executables");
-    std::fs::create_dir_all(&test_exe_directory).expect("Could not create test_executables directory");
+    std::fs::create_dir_all(&test_exe_directory)
+        .expect("Could not create test_executables directory");
 
     let full_code = [CODE_PREFIX, c_code, CODE_SUFFIX].join("");
     let hash = Sha256::digest(full_code.as_ref());
@@ -109,7 +112,14 @@ fn test_exe(c_code: &str) -> impl Iterator<Item=Result<EnhancedEvent, OsError>> 
     assert_next_event_matches!(iter, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::Execve{ .. }), .. }, "Error in setup");
     assert_next_event_matches!(iter, EnhancedEvent { kind: EnhancedEventKind::SyscallExit(Ok(SyscallExit::Execve)), .. });
     loop {
-        if let EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::SchedYield), .. } = iter.next().expect("Error in setup").expect("Error in setup") {
+        if let EnhancedEvent {
+            kind: EnhancedEventKind::SyscallEnter(SyscallEnter::SchedYield),
+            ..
+        } = iter
+            .next()
+            .expect("Error in setup")
+            .expect("Error in setup")
+        {
             break;
         }
     }
@@ -128,7 +138,6 @@ fn test_exit() {
     // Process not running anymore
     assert_iteration_end!(process);
 }
-
 
 #[test]
 fn test_open() {

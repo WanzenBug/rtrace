@@ -1,12 +1,11 @@
-use libc::pid_t;
 use crate::wait_pid::PTraceEventKind;
+use libc::pid_t;
 
 #[derive(Debug, Copy, Clone)]
 pub struct ProcessEvent {
     pub pid: pid_t,
     pub event: ProcessEventKind,
 }
-
 
 impl ProcessEvent {
     pub fn pid(&self) -> pid_t {
