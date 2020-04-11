@@ -1,15 +1,17 @@
-use dry;
-use cc;
 use std::io::Write;
-use dry::TracingCommand;
-use dry::enhanced_tracer::EnhancedTracer;
+
+use cc;
+use log::trace;
+use sha2::Digest;
+use sha2::Sha256;
+
+use dry;
 use dry::enhanced_tracer::EnhancedEvent;
 use dry::enhanced_tracer::EnhancedEventKind;
+use dry::enhanced_tracer::EnhancedTracer;
 use dry::enhanced_tracer::SyscallEnter;
 use dry::enhanced_tracer::SyscallExit;
-use log::trace;
-use sha2::Sha256;
-use sha2::Digest;
+use dry::TracingCommand;
 
 const CODE_PREFIX: &'static str = r#"
 #include <unistd.h>
@@ -130,8 +132,10 @@ fn test_exit() {
 
 #[test]
 fn test_open() {
+    use std::path::Path;
+
     let mut process = test_exe(r#"syscall(SYS_open, "/dev/null", 2);"#);
-    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::Open { .. }), .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::Open { path, .. }), .. } if path.as_path() == Path::new("/dev/null"));
     assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallExit(Ok(SyscallExit::Open(_))), .. });
     assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::ExitGroup { code: 0 }), .. });
     assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::Exit(0), .. });
@@ -140,9 +144,11 @@ fn test_open() {
 
 #[test]
 fn test_open_failure() {
+    use std::path::Path;
     assert!(!std::path::Path::new("/dev/404").exists());
+
     let mut process = test_exe(r#"syscall(SYS_open, "/dev/404", 2);"#);
-    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::Open { .. }), .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::Open { path, .. }), .. } if path.as_path() == Path::new("/dev/404"));
     assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallExit(Err(_)), .. });
     assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::ExitGroup { code: 0 }), .. });
     assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::Exit(0), .. });
