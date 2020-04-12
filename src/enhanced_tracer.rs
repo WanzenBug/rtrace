@@ -9,6 +9,9 @@ use crate::OsError;
 use crate::ProcessEventKind;
 use crate::RawTraceEventHandler;
 use crate::StoppedProcess;
+use std::fmt;
+use std::fmt::Debug;
+use std::mem::{size_of, transmute, MaybeUninit};
 
 #[derive(Debug, Default)]
 pub struct EnhancedTracer {
@@ -47,6 +50,10 @@ pub enum SyscallEnter {
         path: Arc<PathBuf>,
         flags: i32,
     },
+    Stat {
+        path: Arc<PathBuf>,
+        dest: *mut c_void,
+    },
     Execve {
         path: Arc<PathBuf>,
         args: Arc<Vec<CString>>,
@@ -80,12 +87,26 @@ pub enum SyscallExit {
     Exit,
     ExitGroup,
     TGKill,
+    Stat(Stat),
     Unknown(i64),
 }
 
-#[derive(Debug)]
-pub enum SyscallReturnValue {
-    Open { file_descriptor: i32 },
+pub struct Stat(pub libc::stat);
+
+impl Debug for Stat {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Stat")
+            .field("dev", &self.0.st_dev)
+            .field("ino", &self.0.st_ino)
+            // TODO: add more fields
+            .finish()
+    }
+}
+
+impl From<libc::stat> for Stat {
+    fn from(v: libc::stat) -> Self {
+        Stat(v)
+    }
 }
 
 impl RawTraceEventHandler for EnhancedTracer {
@@ -163,6 +184,14 @@ impl SyscallEnter {
                     flags: args[1] as i32,
                 }
             }
+            4 => {
+                let path = process.read_os_string_in_child_vm(args[0] as *const c_void)?;
+
+                SyscallEnter::Stat {
+                    path: Arc::new(PathBuf::from(path)),
+                    dest: args[1] as *mut c_void,
+                }
+            }
             24 => SyscallEnter::SchedYield,
             59 => {
                 let path = process.read_os_string_in_child_vm(args[0] as *const c_void)?;
@@ -192,7 +221,7 @@ impl SyscallEnter {
 
 impl SyscallExit {
     fn from_stopped_process(
-        _process: &mut StoppedProcess,
+        process: &mut StoppedProcess,
         enter_call: SyscallEnter,
         is_error: bool,
         return_value: i64,
@@ -208,6 +237,18 @@ impl SyscallExit {
             SchedYield => SyscallExit::SchedYield,
             Open { .. } => SyscallExit::Open(return_value as i32),
             Unknown { .. } => SyscallExit::Unknown(return_value),
+            Stat { dest, .. } => {
+                let mut buf = [0; size_of::<libc::stat>()];
+                let n = process.read_in_child_vm(&mut buf, dest)?;
+                if buf.len() != n {
+                    return Err(OsError::new(
+                        ErrorKind::Other,
+                        "Cannot read stat struct from process",
+                    ));
+                }
+                let stat: libc::stat = unsafe { transmute(buf) };
+                SyscallExit::Stat(stat.into())
+            }
             _ => unimplemented!(),
         };
         Ok(Ok(kind))
