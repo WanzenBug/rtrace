@@ -32,7 +32,7 @@ fn run() -> Result<(), RTraceError> {
     for event in child.on_process_event(EnhancedTracer::new()) {
         let event = event?;
 
-        eprintln!("{:?}", event);
+        eprintln!("PID {:5}|{:?}", event.process, event.kind);
     }
 
     Ok(())

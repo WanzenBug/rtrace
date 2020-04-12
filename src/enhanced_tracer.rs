@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 use std::ffi::CString;
+use std::fmt;
+use std::fmt::Debug;
 use std::io::ErrorKind;
+use std::mem::size_of;
+use std::mem::transmute;
 use std::os::raw::c_void;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -9,9 +13,6 @@ use crate::OsError;
 use crate::ProcessEventKind;
 use crate::RawTraceEventHandler;
 use crate::StoppedProcess;
-use std::fmt;
-use std::fmt::Debug;
-use std::mem::{size_of, transmute, MaybeUninit};
 
 #[derive(Debug, Default)]
 pub struct EnhancedTracer {
@@ -46,9 +47,21 @@ pub enum EnhancedEventKind {
 
 #[derive(Debug, Clone)]
 pub enum SyscallEnter {
+    Read {
+        file_descriptor: i32,
+        buf: *mut c_void,
+        length: usize,
+    },
+    FStat {
+        file_descriptor: i32,
+        dest: *mut c_void,
+    },
     Open {
         path: Arc<PathBuf>,
         flags: i32,
+    },
+    Close {
+        file_descriptor: i32,
     },
     Stat {
         path: Arc<PathBuf>,
@@ -81,13 +94,16 @@ pub type SyscallResult = Result<SyscallExit, OsError>;
 
 #[derive(Debug)]
 pub enum SyscallExit {
+    Read(usize),
     Open(i32),
+    Close,
     Execve,
     SchedYield,
     Exit,
     ExitGroup,
     TGKill,
     Stat(Stat),
+    FStat(Stat),
     Unknown(i64),
 }
 
@@ -177,6 +193,11 @@ impl SyscallEnter {
         args: [u64; 6],
     ) -> Result<Self, OsError> {
         let kind = match number {
+            0 => SyscallEnter::Read {
+                file_descriptor: args[0] as i32,
+                buf: args[1] as *mut c_void,
+                length: args[2] as usize,
+            },
             2 => {
                 let path = process.read_os_string_in_child_vm(args[0] as *const c_void)?;
                 SyscallEnter::Open {
@@ -184,6 +205,9 @@ impl SyscallEnter {
                     flags: args[1] as i32,
                 }
             }
+            3 => SyscallEnter::Close {
+                file_descriptor: args[0] as i32,
+            },
             4 => {
                 let path = process.read_os_string_in_child_vm(args[0] as *const c_void)?;
 
@@ -192,6 +216,10 @@ impl SyscallEnter {
                     dest: args[1] as *mut c_void,
                 }
             }
+            5 => SyscallEnter::FStat {
+                file_descriptor: args[0] as i32,
+                dest: args[1] as *mut c_void,
+            },
             24 => SyscallEnter::SchedYield,
             59 => {
                 let path = process.read_os_string_in_child_vm(args[0] as *const c_void)?;
@@ -232,6 +260,8 @@ impl SyscallExit {
         }
 
         let kind = match enter_call {
+            Read { .. } => SyscallExit::Read(return_value as usize),
+            Close { .. } => SyscallExit::Close,
             Execve { .. } => SyscallExit::Execve,
             TGKill { .. } => SyscallExit::TGKill,
             SchedYield => SyscallExit::SchedYield,
@@ -249,7 +279,20 @@ impl SyscallExit {
                 let stat: libc::stat = unsafe { transmute(buf) };
                 SyscallExit::Stat(stat.into())
             }
-            _ => unimplemented!(),
+            FStat { dest, .. } => {
+                let mut buf = [0; size_of::<libc::stat>()];
+                let n = process.read_in_child_vm(&mut buf, dest)?;
+                if buf.len() != n {
+                    return Err(OsError::new(
+                        ErrorKind::Other,
+                        "Cannot read stat struct from process",
+                    ));
+                }
+                let stat: libc::stat = unsafe { transmute(buf) };
+                SyscallExit::FStat(stat.into())
+            }
+            Exit { code: _ } => unreachable!("exit syscall never returns"),
+            ExitGroup { code: _ } => unreachable!("exit_group syscall never returns"),
         };
         Ok(Ok(kind))
     }
