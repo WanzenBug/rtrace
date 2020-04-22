@@ -790,7 +790,9 @@ pub struct OpenByHandleAtReturn {}
 pub struct OpenTreeReturn {}
 
 #[derive(Debug, Clone)]
-pub struct OpenatReturn {}
+pub struct OpenatReturn {
+    filedescriptor: i32,
+}
 
 #[derive(Debug, Clone)]
 pub struct Openat2Return {}
@@ -4190,7 +4192,9 @@ impl OpenatReturn {
         retval: i64,
         process: StoppedProcess,
     ) -> Result<Self, OsError> {
-        Ok(OpenatReturn {})
+        Ok(OpenatReturn {
+            filedescriptor: retval as i32,
+        })
     }
 }
 

@@ -1,10 +1,11 @@
 #![allow(unused_variables)]
 
-use super::syscall_args::FromStoppedProcess;
-use crate::{OsError, StoppedProcess};
-use bitflags::bitflags;
 use std::ffi::OsString;
 use std::os::raw::c_void;
+
+use crate::{OsError, StoppedProcess};
+
+use super::syscall_args::*;
 
 #[derive(Debug, Clone)]
 pub struct Accept {}
@@ -650,38 +651,6 @@ pub struct Mlock2 {}
 #[derive(Debug, Clone)]
 pub struct Mlockall {}
 
-bitflags! {
-    pub struct MmapProtection: u64 {
-        const PROT_EXEC = libc::PROT_EXEC as u64;
-        const PROT_READ = libc::PROT_READ as u64;
-        const PROT_WRITE = libc::PROT_WRITE as u64;
-        const PROT_NONE = libc::PROT_NONE as u64;
-    }
-}
-
-bitflags! {
-    pub struct MmapFlags: u64 {
-        const MAP_32BIT = 0x40;
-        const MAP_ANONYMOUS = 0x20;
-        const MAP_DENYWRITE = 0x00800;
-        const MAP_EXECUTABLE = 0x1000;
-        const MAP_FILE = 0;
-        const MAP_FIXED = 0x10;
-        const MAP_GROWSDOWN = 0x00100;
-        const MAP_HUGETLB = 0x40000;
-        const MAP_LOCKED = 0x2000;
-        const MAP_NONBLOCK = 0x10000;
-        const MAP_NORESERVE = 0x4000;
-        const MAP_POPULATE = 0x08000;
-        const MAP_PRIVATE = 0x02;
-        const MAP_SHARED = 0x01;
-        const MAP_SHARED_VALIDATE = 0x03;
-        const MAP_STACK = 0x20000;
-        const MAP_SYNC = 0x80000;
-        const MAP_UNINITIALIZED = 0x4000000;
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Mmap {
     address: *mut c_void,
@@ -837,7 +806,12 @@ pub struct OpenByHandleAt {}
 pub struct OpenTree {}
 
 #[derive(Debug, Clone)]
-pub struct Openat {}
+pub struct Openat {
+    directory_descriptor: DirectoryDescriptor,
+    filename: OsString,
+    flags: OpenFlags,
+    mode: OpenMode,
+}
 
 #[derive(Debug, Clone)]
 pub struct Openat2 {}
@@ -1634,7 +1608,7 @@ impl Accept4 {
 impl Access {
     pub fn from_args(args: [u64; 6], process: &StoppedProcess) -> Result<Self, OsError> {
         Ok(Access {
-            filename: unsafe { FromStoppedProcess::from_process(process, args[0] as *mut c_void)? },
+            filename: FromStoppedProcess::from_process(process, args[0])?,
         })
     }
 }
@@ -2015,13 +1989,11 @@ impl Eventfd2 {
 
 impl Execve {
     pub fn from_args(args: [u64; 6], process: &StoppedProcess) -> Result<Self, OsError> {
-        unsafe {
-            Ok(Execve {
-                filename: OsString::from_process(process, args[0] as *mut c_void)?,
-                argv: Vec::<OsString>::from_process(process, args[1] as *mut c_void)?,
-                envp: Vec::<OsString>::from_process(process, args[2] as *mut c_void)?,
-            })
-        }
+        Ok(Execve {
+            filename: OsString::from_process(process, args[0])?,
+            argv: Vec::<OsString>::from_process(process, args[1])?,
+            envp: Vec::<OsString>::from_process(process, args[2])?,
+        })
     }
 }
 
@@ -2906,8 +2878,8 @@ impl Mmap {
         Ok(Mmap {
             address: args[0] as *mut c_void,
             len: args[1],
-            prot: MmapProtection::from_bits_truncate(args[2]),
-            flags: MmapFlags::from_bits_truncate(args[3]),
+            prot: MmapProtection::from_process(process, args[2])?,
+            flags: MmapFlags::from_process(process, args[3])?,
             filedescriptor: args[4] as i32,
             offset: args[5],
         })
@@ -3204,7 +3176,12 @@ impl OpenTree {
 
 impl Openat {
     pub fn from_args(args: [u64; 6], process: &StoppedProcess) -> Result<Self, OsError> {
-        Ok(Openat {})
+        Ok(Openat {
+            directory_descriptor: DirectoryDescriptor::from_process(process, args[0])?,
+            filename: OsString::from_process(process, args[1])?,
+            flags: OpenFlags::from_process(process, args[2])?,
+            mode: OpenMode::from_process(process, args[3])?,
+        })
     }
 }
 
