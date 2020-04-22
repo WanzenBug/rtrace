@@ -15,7 +15,7 @@ pub struct Accept4 {}
 
 #[derive(Debug, Clone)]
 pub struct Access {
-    filename: OsString,
+    pub filename: OsString,
 }
 
 #[derive(Debug, Clone)]
@@ -89,7 +89,7 @@ pub struct Bpf {}
 
 #[derive(Debug, Clone)]
 pub struct Brk {
-    address: *mut c_void,
+    pub address: *mut c_void,
 }
 
 #[derive(Debug, Clone)]
@@ -208,9 +208,9 @@ pub struct Eventfd2 {}
 
 #[derive(Debug, Clone)]
 pub struct Execve {
-    filename: OsString,
-    argv: Vec<OsString>,
-    envp: Vec<OsString>,
+    pub filename: OsString,
+    pub argv: Vec<OsString>,
+    pub envp: Vec<OsString>,
 }
 
 #[derive(Debug, Clone)]
@@ -653,12 +653,12 @@ pub struct Mlockall {}
 
 #[derive(Debug, Clone)]
 pub struct Mmap {
-    address: *mut c_void,
-    len: u64,
-    prot: MmapProtection,
-    flags: MmapFlags,
-    filedescriptor: i32,
-    offset: u64,
+    pub address: *mut c_void,
+    pub len: u64,
+    pub prot: MmapProtection,
+    pub flags: MmapFlags,
+    pub filedescriptor: i32,
+    pub offset: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -807,10 +807,10 @@ pub struct OpenTree {}
 
 #[derive(Debug, Clone)]
 pub struct Openat {
-    directory_descriptor: DirectoryDescriptor,
-    filename: OsString,
-    flags: OpenFlags,
-    mode: OpenMode,
+    pub directory_descriptor: DirectoryDescriptor,
+    pub filename: OsString,
+    pub flags: OpenFlags,
+    pub mode: OpenMode,
 }
 
 #[derive(Debug, Clone)]
@@ -1387,7 +1387,10 @@ pub struct SpuRun {}
 pub struct Ssetmask {}
 
 #[derive(Debug, Clone)]
-pub struct Stat {}
+pub struct Stat {
+    pub filename: OsString,
+    pub stat_buf_out: *mut c_void,
+}
 
 #[derive(Debug, Clone)]
 pub struct Stat64 {}
@@ -4333,7 +4336,10 @@ impl Ssetmask {
 
 impl Stat {
     pub fn from_args(args: [u64; 6], process: &StoppedProcess) -> Result<Self, OsError> {
-        Ok(Stat {})
+        Ok(Stat {
+            filename: FromStoppedProcess::from_process(process, args[0])?,
+            stat_buf_out: args[1] as *mut c_void,
+        })
     }
 }
 

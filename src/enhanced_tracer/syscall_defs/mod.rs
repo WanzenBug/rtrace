@@ -1487,7 +1487,7 @@ impl SyscallExit {
     pub fn from_enter_event(
         enter: SyscallEnter,
         retval: i64,
-        process: StoppedProcess,
+        process: &StoppedProcess,
     ) -> Result<Self, OsError> {
         if retval < 0 {
             return Ok(SyscallExit::SyscallError(OsError::from_raw_os_error(
