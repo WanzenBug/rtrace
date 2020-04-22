@@ -1,7 +1,7 @@
 #![allow(unused_variables)]
-
 use super::syscall_args::FromStoppedProcess;
 use crate::{OsError, StoppedProcess};
+use bitflags::bitflags;
 use std::ffi::OsString;
 use std::os::raw::c_void;
 
@@ -12,7 +12,9 @@ pub struct Accept {}
 pub struct Accept4 {}
 
 #[derive(Debug, Clone)]
-pub struct Access {}
+pub struct Access {
+    filename: OsString,
+}
 
 #[derive(Debug, Clone)]
 pub struct Acct {}
@@ -647,8 +649,24 @@ pub struct Mlock2 {}
 #[derive(Debug, Clone)]
 pub struct Mlockall {}
 
+bitflags! {
+    pub struct MmapProtection: u64 {
+        const PROT_EXEC = libc::PROT_EXEC as u64;
+        const PROT_READ = libc::PROT_READ as u64;
+        const PROT_WRITE = libc::PROT_WRITE as u64;
+        const PROT_NONE = libc::PROT_NONE as u64;
+    }
+}
+
 #[derive(Debug, Clone)]
-pub struct Mmap {}
+pub struct Mmap {
+    address: *mut c_void,
+    len: u64,
+    prot: MmapProtection,
+    flags: u64,
+    filedescriptor: u64,
+    offset: u64,
+}
 
 #[derive(Debug, Clone)]
 pub struct Mmap2 {}
@@ -1591,7 +1609,9 @@ impl Accept4 {
 
 impl Access {
     pub fn from_args(args: [u64; 6], process: &StoppedProcess) -> Result<Self, OsError> {
-        Ok(Access {})
+        Ok(Access {
+            filename: unsafe { FromStoppedProcess::from_process(process, args[0] as *mut c_void)? },
+        })
     }
 }
 
@@ -2859,7 +2879,14 @@ impl Mlockall {
 
 impl Mmap {
     pub fn from_args(args: [u64; 6], process: &StoppedProcess) -> Result<Self, OsError> {
-        Ok(Mmap {})
+        Ok(Mmap {
+            address: args[0] as *mut c_void,
+            len: args[1],
+            prot: MmapProtection::from_bits_truncate(args[2]),
+            flags: args[3],
+            filedescriptor: args[4],
+            offset: args[5],
+        })
     }
 }
 
