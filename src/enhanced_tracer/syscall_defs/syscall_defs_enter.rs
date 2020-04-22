@@ -1,6 +1,9 @@
 #![allow(unused_variables)]
 
+use super::syscall_args::FromStoppedProcess;
 use crate::{OsError, StoppedProcess};
+use std::ffi::OsString;
+use std::os::raw::c_void;
 
 #[derive(Debug, Clone)]
 pub struct Accept {}
@@ -198,7 +201,11 @@ pub struct Eventfd {}
 pub struct Eventfd2 {}
 
 #[derive(Debug, Clone)]
-pub struct Execve {}
+pub struct Execve {
+    filename: OsString,
+    argv: Vec<OsString>,
+    envp: Vec<OsString>,
+}
 
 #[derive(Debug, Clone)]
 pub struct Execveat {}
@@ -1960,7 +1967,13 @@ impl Eventfd2 {
 
 impl Execve {
     pub fn from_args(args: [u64; 6], process: &StoppedProcess) -> Result<Self, OsError> {
-        Ok(Execve {})
+        unsafe {
+            Ok(Execve {
+                filename: OsString::from_process(process, args[0] as *mut c_void)?,
+                argv: Vec::<OsString>::from_process(process, args[1] as *mut c_void)?,
+                envp: Vec::<OsString>::from_process(process, args[2] as *mut c_void)?,
+            })
+        }
     }
 }
 

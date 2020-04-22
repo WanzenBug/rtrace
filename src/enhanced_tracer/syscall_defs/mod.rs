@@ -2,6 +2,7 @@ use std::io::ErrorKind;
 
 use crate::{OsError, StoppedProcess};
 
+mod syscall_args;
 mod syscall_defs_enter;
 mod syscall_defs_exit;
 
