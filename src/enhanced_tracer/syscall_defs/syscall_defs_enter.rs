@@ -1,3 +1,5 @@
+#![allow(unused_variables)]
+
 use crate::{OsError, StoppedProcess};
 
 #[derive(Debug, Clone)]

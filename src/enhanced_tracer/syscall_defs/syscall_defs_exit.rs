@@ -1,3 +1,5 @@
+#![allow(unused_variables)]
+
 use super::syscall_defs_enter::*;
 use crate::{OsError, StoppedProcess};
 

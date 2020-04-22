@@ -72,10 +72,7 @@ impl RawTraceEventHandler for EnhancedTracer {
                 }
                 EnhancedEventKind::SyscallEnter(syscall_info)
             }
-            ProcessEventKind::SyscallExit {
-                return_val,
-                ..
-            } => {
+            ProcessEventKind::SyscallExit { return_val, .. } => {
                 let enter_info = self.process_tracker.remove(&ev.pid)
                     .ok_or_else(|| OsError::new(ErrorKind::Other, format!("Got syscall exit event without stored enter information for process {}", ev.pid)))?;
 

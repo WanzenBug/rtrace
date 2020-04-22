@@ -1,6 +1,9 @@
-use libc::pid_t;
 use std::io::ErrorKind;
 use std::os::raw::c_ulong;
+
+use libc::pid_t;
+use log::warn;
+use once_cell::sync::Lazy;
 
 use crate::raw::p_trace_get_event_message;
 use crate::raw::wait_pid;
@@ -50,7 +53,13 @@ impl WaitPID {
     }
 
     pub fn from_all_children() -> Result<WaitPID, OsError> {
-        let (w_pid, status) = wait_pid(-1, libc::__WALL | libc::__WNOTHREAD)?;
+        let options = if *WAITPID_SUPPORTS_WNOTHREAD {
+            libc::__WALL | libc::__WNOTHREAD
+        } else {
+            libc::__WALL
+        };
+
+        let (w_pid, status) = wait_pid(-1, options)?;
         WaitPID::from_status(w_pid, status)
     }
 
@@ -82,7 +91,7 @@ impl WaitPID {
                 return Ok(WaitPID::Signal {
                     pid: source_pid,
                     signal: status.stop_signal(),
-                })
+                });
             }
             libc::PTRACE_EVENT_EXEC => PTraceEventKind::Exec,
             libc::PTRACE_EVENT_EXIT => PTraceEventKind::Exit,
@@ -96,7 +105,7 @@ impl WaitPID {
                 return Err(OsError::new(
                     ErrorKind::Other,
                     format!("Unknown ptrace event status: {}", x),
-                ))
+                ));
             }
         };
 
@@ -109,3 +118,13 @@ impl WaitPID {
         })
     }
 }
+
+static WAITPID_SUPPORTS_WNOTHREAD: Lazy<bool> = Lazy::new(|| {
+    match wait_pid(1, libc::WNOHANG | libc::__WNOTHREAD) {
+        Err(ref e) if e.kind() == ErrorKind::InvalidInput => {
+            warn!("wait_pid() does not support __WNOTHREAD option. Running 2 or more traced processes in parallel will most likely not work");
+            false
+        }
+        _ => true,
+    }
+});
