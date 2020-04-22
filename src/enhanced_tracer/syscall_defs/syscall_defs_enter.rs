@@ -84,7 +84,9 @@ pub struct Bind {}
 pub struct Bpf {}
 
 #[derive(Debug, Clone)]
-pub struct Brk {}
+pub struct Brk {
+    address: *mut c_void,
+}
 
 #[derive(Debug, Clone)]
 pub struct Cachectl {}
@@ -1733,7 +1735,9 @@ impl Bpf {
 
 impl Brk {
     pub fn from_args(args: [u64; 6], process: &StoppedProcess) -> Result<Self, OsError> {
-        Ok(Brk {})
+        Ok(Brk {
+            address: args[0] as *mut c_void,
+        })
     }
 }
 
