@@ -1,15 +1,23 @@
-use log::error;
-use pretty_env_logger;
-use rtrace::enhanced_tracer::EnhancedTracer;
-use rtrace::TracingCommand;
 use std::env::args_os;
+use std::env::set_var;
+use std::env::var;
 use std::error::Error;
 use std::ffi::OsString;
-use std::process::{exit, Command};
+use std::process::exit;
+use std::process::Command;
+
+use log::error;
+use pretty_env_logger;
+
+use rtrace::enhanced_tracer::EnhancedTracer;
+use rtrace::TracingCommand;
 
 type RTraceError = Box<dyn Error + Send + Sync + 'static>;
 
 fn main() {
+    if let Err(_) = var("RUST_LOG") {
+        set_var("RUST_LOG", "warn");
+    }
     pretty_env_logger::init();
 
     let exitcode = match run() {
