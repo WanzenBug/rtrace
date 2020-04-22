@@ -2,6 +2,7 @@
 
 use super::syscall_defs_enter::*;
 use crate::{OsError, StoppedProcess};
+use bitflags::_core::ffi::c_void;
 
 #[derive(Debug, Clone)]
 pub struct AcceptReturn {}
@@ -640,7 +641,9 @@ pub struct Mlock2Return {}
 pub struct MlockallReturn {}
 
 #[derive(Debug, Clone)]
-pub struct MmapReturn {}
+pub struct MmapReturn {
+    address: *mut c_void,
+}
 
 #[derive(Debug, Clone)]
 pub struct Mmap2Return {}
@@ -3695,7 +3698,9 @@ impl MmapReturn {
         retval: i64,
         process: StoppedProcess,
     ) -> Result<Self, OsError> {
-        Ok(MmapReturn {})
+        Ok(MmapReturn {
+            address: retval as *mut c_void,
+        })
     }
 }
 

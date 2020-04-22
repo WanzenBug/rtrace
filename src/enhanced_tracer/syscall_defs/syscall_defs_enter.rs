@@ -1,4 +1,5 @@
 #![allow(unused_variables)]
+
 use super::syscall_args::FromStoppedProcess;
 use crate::{OsError, StoppedProcess};
 use bitflags::bitflags;
@@ -658,13 +659,36 @@ bitflags! {
     }
 }
 
+bitflags! {
+    pub struct MmapFlags: u64 {
+        const MAP_32BIT = 0x40;
+        const MAP_ANONYMOUS = 0x20;
+        const MAP_DENYWRITE = 0x00800;
+        const MAP_EXECUTABLE = 0x1000;
+        const MAP_FILE = 0;
+        const MAP_FIXED = 0x10;
+        const MAP_GROWSDOWN = 0x00100;
+        const MAP_HUGETLB = 0x40000;
+        const MAP_LOCKED = 0x2000;
+        const MAP_NONBLOCK = 0x10000;
+        const MAP_NORESERVE = 0x4000;
+        const MAP_POPULATE = 0x08000;
+        const MAP_PRIVATE = 0x02;
+        const MAP_SHARED = 0x01;
+        const MAP_SHARED_VALIDATE = 0x03;
+        const MAP_STACK = 0x20000;
+        const MAP_SYNC = 0x80000;
+        const MAP_UNINITIALIZED = 0x4000000;
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Mmap {
     address: *mut c_void,
     len: u64,
     prot: MmapProtection,
-    flags: u64,
-    filedescriptor: u64,
+    flags: MmapFlags,
+    filedescriptor: i32,
     offset: u64,
 }
 
@@ -2883,8 +2907,8 @@ impl Mmap {
             address: args[0] as *mut c_void,
             len: args[1],
             prot: MmapProtection::from_bits_truncate(args[2]),
-            flags: args[3],
-            filedescriptor: args[4],
+            flags: MmapFlags::from_bits_truncate(args[3]),
+            filedescriptor: args[4] as i32,
             offset: args[5],
         })
     }
