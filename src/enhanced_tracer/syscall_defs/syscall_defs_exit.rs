@@ -259,7 +259,25 @@ pub struct Fchown16Return {}
 pub struct FchownatReturn {}
 
 #[derive(Debug, Clone)]
-pub struct FcntlReturn {}
+pub enum FcntlReturn {
+    GetFd(FileDescriptorFlags),
+    SetFd,
+    GetFl,
+    SetFl,
+    GetLk,
+    SetLk,
+    SetLkw,
+    SetOwn,
+    GetOwn,
+    SetSig,
+    GetSig,
+    GetLk64,
+    SetLk64,
+    SetLkw64,
+    SetOwnEx,
+    GetOwnEx,
+    GetOwnerUIDs,
+}
 
 #[derive(Debug, Clone)]
 pub struct Fcntl64Return {}
@@ -2414,7 +2432,28 @@ impl FcntlReturn {
         retval: i64,
         process: &StoppedProcess,
     ) -> Result<Self, OsError> {
-        Ok(FcntlReturn {})
+        let res = match enter.command {
+            FcntlCommand::GetFd => {
+                FcntlReturn::GetFd(FromStoppedProcess::from_process(process, retval as u64)?)
+            }
+            FcntlCommand::SetFd => FcntlReturn::SetFd,
+            FcntlCommand::GetFl => FcntlReturn::GetFl,
+            FcntlCommand::SetFl => FcntlReturn::SetFl,
+            FcntlCommand::GetLk => FcntlReturn::GetLk,
+            FcntlCommand::SetLk => FcntlReturn::SetLk,
+            FcntlCommand::SetLkw => FcntlReturn::SetLkw,
+            FcntlCommand::SetOwn => FcntlReturn::SetOwn,
+            FcntlCommand::GetOwn => FcntlReturn::GetOwn,
+            FcntlCommand::SetSig => FcntlReturn::SetSig,
+            FcntlCommand::GetSig => FcntlReturn::GetSig,
+            FcntlCommand::GetLk64 => FcntlReturn::GetLk64,
+            FcntlCommand::SetLk64 => FcntlReturn::SetLk64,
+            FcntlCommand::SetLkw64 => FcntlReturn::SetLkw64,
+            FcntlCommand::SetOwnEx => FcntlReturn::SetOwnEx,
+            FcntlCommand::GetOwnEx => FcntlReturn::GetOwnEx,
+            FcntlCommand::GetOwnerUIDs => FcntlReturn::GetOwnerUIDs,
+        };
+        Ok(res)
     }
 }
 

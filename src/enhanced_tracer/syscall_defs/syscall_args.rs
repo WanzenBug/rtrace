@@ -75,6 +75,27 @@ pub enum SystemClock {
     TAI,
 }
 
+#[derive(Debug, Clone)]
+pub enum FcntlCommand {
+    GetFd,
+    SetFd,
+    GetFl,
+    SetFl,
+    GetLk,
+    SetLk,
+    SetLkw,
+    SetOwn,
+    GetOwn,
+    SetSig,
+    GetSig,
+    GetLk64,
+    SetLk64,
+    SetLkw64,
+    SetOwnEx,
+    GetOwnEx,
+    GetOwnerUIDs,
+}
+
 bitflags! {
     pub struct ArchPrctlMode: i32 {
         const ARCH_SET_CPUID  = 0x1012;
@@ -93,6 +114,12 @@ bitflags! {
         const O_RDWR = 2;
         const O_APPEND = 2000;
         // TODO: More flags
+    }
+}
+
+bitflags! {
+    pub struct FileDescriptorFlags: u64 {
+        const FD_CLOEXEC = 1;
     }
 }
 
@@ -174,30 +201,6 @@ impl FromStoppedProcess for Vec<OsString> {
     }
 }
 
-impl FromStoppedProcess for MmapFlags {
-    fn from_process(_process: &StoppedProcess, arg: u64) -> Result<Self, OsError> {
-        Ok(MmapFlags::from_bits_truncate(arg))
-    }
-}
-
-impl FromStoppedProcess for MmapProtection {
-    fn from_process(_process: &StoppedProcess, arg: u64) -> Result<Self, OsError> {
-        Ok(MmapProtection::from_bits_truncate(arg))
-    }
-}
-
-impl FromStoppedProcess for OpenFlags {
-    fn from_process(_process: &StoppedProcess, arg: u64) -> Result<Self, OsError> {
-        Ok(OpenFlags::from_bits_truncate(arg))
-    }
-}
-
-impl FromStoppedProcess for OpenMode {
-    fn from_process(_process: &StoppedProcess, arg: u64) -> Result<Self, OsError> {
-        Ok(OpenMode::from_bits_truncate(arg))
-    }
-}
-
 impl FromStoppedProcess for DirectoryDescriptor {
     fn from_process(_process: &StoppedProcess, arg: u64) -> Result<Self, OsError> {
         let arg = arg as i32;
@@ -212,12 +215,6 @@ impl FromStoppedProcess for DirectoryDescriptor {
 impl FromStoppedProcess for StatStruct {
     fn from_process(process: &StoppedProcess, arg: u64) -> Result<Self, OsError> {
         unsafe { read_from_remote_process(process, arg as *mut c_void, false) }
-    }
-}
-
-impl FromStoppedProcess for ArchPrctlMode {
-    fn from_process(_process: &StoppedProcess, arg: u64) -> Result<Self, OsError> {
-        Ok(ArchPrctlMode::from_bits_truncate(arg as i32))
     }
 }
 
@@ -246,13 +243,66 @@ impl FromStoppedProcess for SystemClock {
                 return Err(OsError::new(
                     ErrorKind::Other,
                     format!("Could not determine SystemClock from value '{}'", x),
-                ))
+                ));
             }
         };
 
         Ok(ret)
     }
 }
+
+impl FromStoppedProcess for FcntlCommand {
+    fn from_process(_process: &StoppedProcess, arg: u64) -> Result<Self, OsError> {
+        use FcntlCommand::*;
+        let ret = match arg {
+            1 => GetFd,
+            2 => SetFd,
+            3 => GetFl,
+            4 => SetFl,
+            5 => GetLk,
+            6 => SetLk,
+            7 => SetLkw,
+            8 => SetOwn,
+            9 => GetOwn,
+            10 => SetSig,
+            11 => GetSig,
+            12 => GetLk64,
+            13 => SetLk64,
+            14 => SetLkw64,
+            15 => SetOwnEx,
+            16 => GetOwnEx,
+            17 => GetOwnerUIDs,
+            x => {
+                return Err(OsError::new(
+                    ErrorKind::Other,
+                    format!("Could not determine FcntlCommand from value '{}'", x),
+                ));
+            }
+        };
+        Ok(ret)
+    }
+}
+
+macro_rules! impl_from_stopped_process_for_bitflags {
+    ($impl_ty:ty) => {
+        impl_from_stopped_process_for_bitflags!($impl_ty, u64);
+    };
+
+    ($impl_ty:ty, $repr_ty:ty) => {
+        impl FromStoppedProcess for $impl_ty {
+            fn from_process(_process: &StoppedProcess, arg: u64) -> Result<Self, OsError> {
+                Ok(Self::from_bits_truncate(arg as $repr_ty))
+            }
+        }
+    };
+}
+
+impl_from_stopped_process_for_bitflags!(ArchPrctlMode, i32);
+impl_from_stopped_process_for_bitflags!(FileDescriptorFlags);
+impl_from_stopped_process_for_bitflags!(MmapFlags);
+impl_from_stopped_process_for_bitflags!(MmapProtection);
+impl_from_stopped_process_for_bitflags!(OpenFlags);
+impl_from_stopped_process_for_bitflags!(OpenMode);
 
 unsafe fn read_from_remote_process<T>(
     process: &StoppedProcess,

@@ -276,7 +276,11 @@ pub struct Fchown16 {}
 pub struct Fchownat {}
 
 #[derive(Debug, Clone)]
-pub struct Fcntl {}
+pub struct Fcntl {
+    pub file_descriptor: i32,
+    pub command: FcntlCommand,
+    pub arg: *mut c_void,
+}
 
 #[derive(Debug, Clone)]
 pub struct Fcntl64 {}
@@ -2130,7 +2134,11 @@ impl Fchownat {
 
 impl Fcntl {
     pub fn from_args(args: [u64; 6], process: &StoppedProcess) -> Result<Self, OsError> {
-        Ok(Fcntl {})
+        Ok(Fcntl {
+            file_descriptor: args[0] as i32,
+            command: FromStoppedProcess::from_process(process, args[1])?,
+            arg: args[2] as *mut c_void,
+        })
     }
 }
 
