@@ -176,7 +176,9 @@ pub struct DebugSetcontextReturn {}
 pub struct DeleteModuleReturn {}
 
 #[derive(Debug, Clone)]
-pub struct DupReturn {}
+pub struct DupReturn {
+    pub file_descriptor: i32,
+}
 
 #[derive(Debug, Clone)]
 pub struct Dup2Return {}
@@ -2140,7 +2142,9 @@ impl DupReturn {
         retval: i64,
         process: &StoppedProcess,
     ) -> Result<Self, OsError> {
-        Ok(DupReturn {})
+        Ok(DupReturn {
+            file_descriptor: retval as i32,
+        })
     }
 }
 

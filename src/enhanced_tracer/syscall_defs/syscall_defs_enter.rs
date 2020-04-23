@@ -185,7 +185,9 @@ pub struct DebugSetcontext {}
 pub struct DeleteModule {}
 
 #[derive(Debug, Clone)]
-pub struct Dup {}
+pub struct Dup {
+    file_descriptor: i32,
+}
 
 #[derive(Debug, Clone)]
 pub struct Dup2 {}
@@ -1956,7 +1958,9 @@ impl DeleteModule {
 
 impl Dup {
     pub fn from_args(args: [u64; 6], process: &StoppedProcess) -> Result<Self, OsError> {
-        Ok(Dup {})
+        Ok(Dup {
+            file_descriptor: args[0] as i32,
+        })
     }
 }
 
