@@ -129,7 +129,9 @@ pub struct ClockGetresReturn {}
 pub struct ClockGetresTime32Return {}
 
 #[derive(Debug, Clone)]
-pub struct ClockGettimeReturn {}
+pub struct ClockGettimeReturn {
+    pub timespec: TimeSpec,
+}
 
 #[derive(Debug, Clone)]
 pub struct ClockGettime32Return {}
@@ -1986,7 +1988,9 @@ impl ClockGettimeReturn {
         retval: i64,
         process: &StoppedProcess,
     ) -> Result<Self, OsError> {
-        Ok(ClockGettimeReturn {})
+        Ok(ClockGettimeReturn {
+            timespec: FromStoppedProcess::from_process(process, enter.timestamp as u64)?,
+        })
     }
 }
 

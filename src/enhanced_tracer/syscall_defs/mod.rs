@@ -6,6 +6,7 @@ mod syscall_args;
 mod syscall_defs_enter;
 mod syscall_defs_exit;
 
+pub use syscall_args::*;
 pub use syscall_defs_enter::*;
 pub use syscall_defs_exit::*;
 

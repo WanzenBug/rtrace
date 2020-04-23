@@ -135,7 +135,10 @@ pub struct ClockGetres {}
 pub struct ClockGetresTime32 {}
 
 #[derive(Debug, Clone)]
-pub struct ClockGettime {}
+pub struct ClockGettime {
+    pub which_clock: SystemClock,
+    pub timestamp: *mut c_void,
+}
 
 #[derive(Debug, Clone)]
 pub struct ClockGettime32 {}
@@ -1856,7 +1859,10 @@ impl ClockGetresTime32 {
 
 impl ClockGettime {
     pub fn from_args(args: [u64; 6], process: &StoppedProcess) -> Result<Self, OsError> {
-        Ok(ClockGettime {})
+        Ok(ClockGettime {
+            which_clock: FromStoppedProcess::from_process(process, args[0])?,
+            timestamp: args[1] as *mut c_void,
+        })
     }
 }
 

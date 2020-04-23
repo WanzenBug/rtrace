@@ -18,6 +18,7 @@ const CODE_PREFIX: &'static str = r#"
 #include <unistd.h>
 #include <sched.h>
 #include <sys/syscall.h>
+#include <time.h>
 
 int main() {
     sched_yield();
@@ -160,6 +161,21 @@ fn test_open_failure() {
     let mut process = test_exe(r#"syscall(SYS_open, "/dev/404", 2);"#);
     assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::Open(Open { filename, .. })), .. } if filename == Path::new("/dev/404"));
     assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallExit(SyscallExit::SyscallError(_)), .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::ExitGroup(ExitGroup { code: 0 })), .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::Exit(0), .. });
+    assert_iteration_end!(process);
+}
+
+#[test]
+fn test_clock_gettime() {
+    let mut process = test_exe(
+        r#"
+    struct timespec tp;
+    syscall(SYS_clock_gettime, CLOCK_MONOTONIC, &tp);
+    "#,
+    );
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::ClockGettime(ClockGettime { which_clock: SystemClock::Monotonic, .. })), .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallExit(SyscallExit::SyscallGood(SyscallReturn::ClockGettime(ClockGettimeReturn { timespec }))), .. } if timespec.sec != 0);
     assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::ExitGroup(ExitGroup { code: 0 })), .. });
     assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::Exit(0), .. });
     assert_iteration_end!(process);

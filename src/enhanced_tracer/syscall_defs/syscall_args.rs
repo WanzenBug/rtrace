@@ -1,7 +1,7 @@
 use crate::OsError;
 use crate::StoppedProcess;
 use std::ffi::OsString;
-use std::io::{Error, ErrorKind};
+use std::io::ErrorKind;
 use std::mem::size_of;
 use std::mem::MaybeUninit;
 use std::os::raw::c_void;
@@ -22,22 +22,57 @@ pub enum DirectoryDescriptor {
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct StatStruct {
-    pub dev: u64,     /* Device.  */
-    pub ino: u64,     /* File serial number.  */
-    pub nlink: u64,   /* Link count.  */
-    pub mode: u32,    /* File mode.  */
-    pub uid: u32,     /* User ID of the file's owner.  */
-    pub gid: u32,     /* Group ID of the file's group. */
-    pub rdev: u64,    /* Device number, if device.  */
-    pub size: i64,    /* Size of file, in bytes.  */
-    pub blksize: i32, /* Optimal block size for I/O.  */
-    pub blocks: i64,  /* Number 512-byte blocks allocated. */
-    pub atime: i64,   /* Time of last access.  */
+    pub dev: u64,
+    /* Device.  */
+    pub ino: u64,
+    /* File serial number.  */
+    pub nlink: u64,
+    /* Link count.  */
+    pub mode: u32,
+    /* File mode.  */
+    pub uid: u32,
+    /* User ID of the file's owner.  */
+    pub gid: u32,
+    /* Group ID of the file's group. */
+    pub rdev: u64,
+    /* Device number, if device.  */
+    pub size: i64,
+    /* Size of file, in bytes.  */
+    pub blksize: i32,
+    /* Optimal block size for I/O.  */
+    pub blocks: i64,
+    /* Number 512-byte blocks allocated. */
+    pub atime: i64,
+    /* Time of last access.  */
     pub atime_nsec: u64,
-    pub mtime: i64, /* Time of last modification.  */
+    pub mtime: i64,
+    /* Time of last modification.  */
     pub mtime_nsec: u64,
-    pub ctime: i64, /* Time of last status change.  */
+    pub ctime: i64,
+    /* Time of last status change.  */
     pub ctime_nsec: u64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct TimeSpec {
+    pub sec: i64,
+    pub nsec: i64,
+}
+
+#[derive(Debug, Clone)]
+pub enum SystemClock {
+    Realtime,
+    Monotonic,
+    ProcessCputimeId,
+    ThreadCputimeId,
+    MonotonicRaw,
+    RealtimeCoarse,
+    MonotonicCoarse,
+    Boottime,
+    RealtimeAlarm,
+    BoottimeAlarm,
+    TAI,
 }
 
 bitflags! {
@@ -181,8 +216,41 @@ impl FromStoppedProcess for StatStruct {
 }
 
 impl FromStoppedProcess for ArchPrctlMode {
-    fn from_process(_process: &StoppedProcess, arg: u64) -> Result<Self, Error> {
+    fn from_process(_process: &StoppedProcess, arg: u64) -> Result<Self, OsError> {
         Ok(ArchPrctlMode::from_bits_truncate(arg as i32))
+    }
+}
+
+impl FromStoppedProcess for TimeSpec {
+    fn from_process(process: &StoppedProcess, arg: u64) -> Result<Self, OsError> {
+        unsafe { read_from_remote_process(process, arg as *mut c_void, false) }
+    }
+}
+
+impl FromStoppedProcess for SystemClock {
+    fn from_process(_process: &StoppedProcess, arg: u64) -> Result<Self, OsError> {
+        use SystemClock::*;
+        let ret = match arg {
+            0 => Realtime,
+            1 => Monotonic,
+            2 => ProcessCputimeId,
+            3 => ThreadCputimeId,
+            4 => MonotonicRaw,
+            5 => RealtimeCoarse,
+            6 => MonotonicCoarse,
+            7 => Boottime,
+            8 => RealtimeAlarm,
+            9 => BoottimeAlarm,
+            11 => TAI,
+            x => {
+                return Err(OsError::new(
+                    ErrorKind::Other,
+                    format!("Could not determine SystemClock from value '{}'", x),
+                ))
+            }
+        };
+
+        Ok(ret)
     }
 }
 
