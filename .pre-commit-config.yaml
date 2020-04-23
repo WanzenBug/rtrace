@@ -8,3 +8,10 @@ repos:
     -   id: end-of-file-fixer
     -   id: check-yaml
     -   id: check-added-large-files
+-   repo: local
+    hooks:
+    -   id: rustfmt
+        name: rust code must be formatted
+        language: system
+        entry: rustfmt
+        files: ".*\\.rs"
