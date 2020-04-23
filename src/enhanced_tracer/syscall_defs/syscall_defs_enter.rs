@@ -162,7 +162,9 @@ pub struct Clone {}
 pub struct Clone3 {}
 
 #[derive(Debug, Clone)]
-pub struct Close {}
+pub struct Close {
+    pub file_descriptor: i32,
+}
 
 #[derive(Debug, Clone)]
 pub struct Connect {}
@@ -1910,7 +1912,9 @@ impl Clone3 {
 
 impl Close {
     pub fn from_args(args: [u64; 6], process: &StoppedProcess) -> Result<Self, OsError> {
-        Ok(Close {})
+        Ok(Close {
+            file_descriptor: args[0] as i32,
+        })
     }
 }
 
