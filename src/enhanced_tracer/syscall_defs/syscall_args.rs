@@ -1,7 +1,7 @@
 use crate::OsError;
 use crate::StoppedProcess;
 use std::ffi::OsString;
-use std::io::ErrorKind;
+use std::io::{Error, ErrorKind};
 use std::mem::size_of;
 use std::mem::MaybeUninit;
 use std::os::raw::c_void;
@@ -38,6 +38,17 @@ pub struct StatStruct {
     pub mtime_nsec: u64,
     pub ctime: i64, /* Time of last status change.  */
     pub ctime_nsec: u64,
+}
+
+bitflags! {
+    pub struct ArchPrctlMode: i32 {
+        const ARCH_SET_CPUID  = 0x1012;
+        const ARCH_GET_CPUID  = 0x1011;
+        const ARCH_SET_FS = 0x1002;
+        const ARCH_GET_FS = 0x1003;
+        const ARCH_SET_GS = 0x1001;
+        const ARCH_GET_GS = 0x1004;
+    }
 }
 
 bitflags! {
@@ -166,6 +177,12 @@ impl FromStoppedProcess for DirectoryDescriptor {
 impl FromStoppedProcess for StatStruct {
     fn from_process(process: &StoppedProcess, arg: u64) -> Result<Self, OsError> {
         unsafe { read_from_remote_process(process, arg as *mut c_void, false) }
+    }
+}
+
+impl FromStoppedProcess for ArchPrctlMode {
+    fn from_process(_process: &StoppedProcess, arg: u64) -> Result<Self, Error> {
+        Ok(ArchPrctlMode::from_bits_truncate(arg as i32))
     }
 }
 

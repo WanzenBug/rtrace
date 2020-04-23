@@ -73,7 +73,10 @@ pub struct Arch64Mremap {}
 pub struct Arch64Munmap {}
 
 #[derive(Debug, Clone)]
-pub struct ArchPrctl {}
+pub struct ArchPrctl {
+    code: ArchPrctlMode,
+    address: *mut c_void,
+}
 
 #[derive(Debug, Clone)]
 pub struct Arm64Personality {}
@@ -1726,7 +1729,10 @@ impl Arch64Munmap {
 
 impl ArchPrctl {
     pub fn from_args(args: [u64; 6], process: &StoppedProcess) -> Result<Self, OsError> {
-        Ok(ArchPrctl {})
+        Ok(ArchPrctl {
+            code: FromStoppedProcess::from_process(process, args[0])?,
+            address: args[1] as *mut c_void,
+        })
     }
 }
 
