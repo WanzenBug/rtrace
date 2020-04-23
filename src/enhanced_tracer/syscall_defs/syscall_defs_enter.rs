@@ -220,10 +220,14 @@ pub struct Execve {
 pub struct Execveat {}
 
 #[derive(Debug, Clone)]
-pub struct Exit {}
+pub struct Exit {
+    pub code: i32,
+}
 
 #[derive(Debug, Clone)]
-pub struct ExitGroup {}
+pub struct ExitGroup {
+    pub code: i32,
+}
 
 #[derive(Debug, Clone)]
 pub struct Faccessat {}
@@ -800,7 +804,11 @@ pub struct Oldumount {}
 pub struct Olduname {}
 
 #[derive(Debug, Clone)]
-pub struct Open {}
+pub struct Open {
+    pub filename: OsString,
+    pub flags: OpenFlags,
+    pub mode: OpenMode,
+}
 
 #[derive(Debug, Clone)]
 pub struct OpenByHandleAt {}
@@ -2014,13 +2022,17 @@ impl Execveat {
 
 impl Exit {
     pub fn from_args(args: [u64; 6], process: &StoppedProcess) -> Result<Self, OsError> {
-        Ok(Exit {})
+        Ok(Exit {
+            code: args[0] as i32,
+        })
     }
 }
 
 impl ExitGroup {
     pub fn from_args(args: [u64; 6], process: &StoppedProcess) -> Result<Self, OsError> {
-        Ok(ExitGroup {})
+        Ok(ExitGroup {
+            code: args[0] as i32,
+        })
     }
 }
 
@@ -3167,7 +3179,11 @@ impl Olduname {
 
 impl Open {
     pub fn from_args(args: [u64; 6], process: &StoppedProcess) -> Result<Self, OsError> {
-        Ok(Open {})
+        Ok(Open {
+            filename: FromStoppedProcess::from_process(process, args[0])?,
+            flags: FromStoppedProcess::from_process(process, args[1])?,
+            mode: FromStoppedProcess::from_process(process, args[2])?,
+        })
     }
 }
 
