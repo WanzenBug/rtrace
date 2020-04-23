@@ -1,6 +1,6 @@
 # rtrace - Rust bindings to ptrace API
 
-Provide safe bindings to `ptrace`. This can be used to implement debuggers or other development tools 
+Provide safe bindings to `ptrace`. This can be used to implement debuggers or other development tools
 like `strace` or similar.
 
 **NOTE**: This is optimized for Linux targets (with kernel >3.4) on x86_64. No other platform is
@@ -13,9 +13,9 @@ convenience around creating a pipeline.
 
 ### dry
 `dry` is a prototype of a more user-friendly `dvc run`. Instead of manually adding all
-dependencies, `dry` uses the `ptrace` API (as used by `strace`, `gdb`, ...) to 
+dependencies, `dry` uses the `ptrace` API (as used by `strace`, `gdb`, ...) to
 recognize inputs and outputs of a command. This information is then stored in a
-`.dvc` that can be used with other normal `dvc` commands.  
+`.dvc` that can be used with other normal `dvc` commands.
 
 ```terminal
 /test $ ll
@@ -77,8 +77,8 @@ meta:
 
 #### Implementation details
 `dry` tries to pull the inputs of the command by tracing the syscalls that are executed. This is done via the
-`ptrace` API, also used by the `strace` tool. As the API is quite clunky on older kernels, `dry` requires Linux 
-5.3 or above. Also, its is developed and tested on x86_64 only. 
+`ptrace` API, also used by the `strace` tool. As the API is quite clunky on older kernels, `dry` requires Linux
+5.3 or above. Also, its is developed and tested on x86_64 only.
 
 Things the are considered input:
 * Every **file** in the current repository
