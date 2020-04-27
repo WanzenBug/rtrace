@@ -619,7 +619,10 @@ pub struct Lseek {}
 pub struct Lsetxattr {}
 
 #[derive(Debug, Clone)]
-pub struct Lstat {}
+pub struct Lstat {
+    pub filename: OsString,
+    pub stat_buf_out: *mut c_void,
+}
 
 #[derive(Debug, Clone)]
 pub struct Lstat64 {}
@@ -2816,7 +2819,10 @@ impl Lsetxattr {
 
 impl Lstat {
     pub fn from_args(args: [u64; 6], process: &StoppedProcess) -> Result<Self, OsError> {
-        Ok(Lstat {})
+        Ok(Lstat {
+            filename: FromStoppedProcess::from_process(process, args[0])?,
+            stat_buf_out: args[1] as *mut c_void,
+        })
     }
 }
 

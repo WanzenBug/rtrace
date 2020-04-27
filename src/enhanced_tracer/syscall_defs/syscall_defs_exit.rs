@@ -615,7 +615,9 @@ pub struct LseekReturn {}
 pub struct LsetxattrReturn {}
 
 #[derive(Debug, Clone)]
-pub struct LstatReturn {}
+pub struct LstatReturn {
+    stat: StatStruct,
+}
 
 #[derive(Debug, Clone)]
 pub struct Lstat64Return {}
@@ -3577,7 +3579,9 @@ impl LstatReturn {
         retval: i64,
         process: &StoppedProcess,
     ) -> Result<Self, OsError> {
-        Ok(LstatReturn {})
+        Ok(LstatReturn {
+            stat: FromStoppedProcess::from_process(process, enter.stat_buf_out as u64)?,
+        })
     }
 }
 
