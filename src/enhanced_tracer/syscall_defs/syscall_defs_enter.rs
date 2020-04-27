@@ -352,7 +352,14 @@ pub struct Ftruncate {}
 pub struct Ftruncate64 {}
 
 #[derive(Debug, Clone)]
-pub struct Futex {}
+pub struct Futex {
+    pub user_address: *mut u32,
+    pub operation: FutexOperation,
+    pub value: u32,
+    pub timespec: Option<TimeSpec>,
+    pub address2: *mut u32,
+    pub value3: u32,
+}
 
 #[derive(Debug, Clone)]
 pub struct FutexTime32 {}
@@ -2285,7 +2292,14 @@ impl Ftruncate64 {
 
 impl Futex {
     pub fn from_args(args: [u64; 6], process: &StoppedProcess) -> Result<Self, OsError> {
-        Ok(Futex {})
+        Ok(Futex {
+            user_address: args[0] as *mut u32,
+            operation: FromStoppedProcess::from_process(process, args[1])?,
+            value: args[2] as u32,
+            timespec: FromStoppedProcess::from_process(process, args[3])?,
+            address2: args[4] as *mut u32,
+            value3: args[5] as u32,
+        })
     }
 }
 

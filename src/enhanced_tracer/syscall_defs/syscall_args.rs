@@ -124,6 +124,26 @@ bitflags! {
 }
 
 bitflags! {
+    pub struct FutexOperation: i32 {
+        const WAIT = 0;
+        const WAKE = 1;
+        const FD = 2;
+        const REQUEUE = 3;
+        const CMP_REQUEUE = 4;
+        const WAKE_OP = 5;
+        const LOCK_PI = 6;
+        const UNLOCK_PI = 7;
+        const TRY_LOCK_PI = 8;
+        const WAIT_BITSET = 9;
+        const WAKE_BITSET = 10;
+        const WAIT_REQUEUE_PI = 11;
+        const CMP_REQUEUE_PI = 12;
+        const PRIVATE_FLAG = 128;
+        const CLOCK_REALTIME = 256;
+    }
+}
+
+bitflags! {
     pub struct OpenMode: u64 {
         const S_IRWXU = 00700;
         const S_IRUSR = 00400;
@@ -282,6 +302,23 @@ impl FromStoppedProcess for FcntlCommand {
         Ok(ret)
     }
 }
+macro_rules! impl_from_stopped_process_for_maybe_nulls {
+    ($impl_ty:ty) => {
+        impl FromStoppedProcess for Option<$impl_ty> {
+            fn from_process(process: &StoppedProcess, arg: u64) -> Result<Self, OsError> {
+                let ptr_val = arg as *mut c_void;
+                if ptr_val.is_null() {
+                    return Ok(None);
+                }
+
+                let value = <$impl_ty as FromStoppedProcess>::from_process(process, arg)?;
+                Ok(Some(value))
+            }
+        }
+    };
+}
+
+impl_from_stopped_process_for_maybe_nulls!(TimeSpec);
 
 macro_rules! impl_from_stopped_process_for_bitflags {
     ($impl_ty:ty) => {
@@ -303,6 +340,7 @@ impl_from_stopped_process_for_bitflags!(MmapFlags);
 impl_from_stopped_process_for_bitflags!(MmapProtection);
 impl_from_stopped_process_for_bitflags!(OpenFlags);
 impl_from_stopped_process_for_bitflags!(OpenMode);
+impl_from_stopped_process_for_bitflags!(FutexOperation, i32);
 
 unsafe fn read_from_remote_process<T>(
     process: &StoppedProcess,
