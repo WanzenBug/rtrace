@@ -322,7 +322,9 @@ pub struct FsopenReturn {}
 pub struct FspickReturn {}
 
 #[derive(Debug, Clone)]
-pub struct FstatReturn {}
+pub struct FstatReturn {
+    pub stat: StatStruct,
+}
 
 #[derive(Debug, Clone)]
 pub struct Fstat64Return {}
@@ -1395,7 +1397,7 @@ pub struct SsetmaskReturn {}
 
 #[derive(Debug, Clone)]
 pub struct StatReturn {
-    stat: StatStruct,
+    pub stat: StatStruct,
 }
 
 #[derive(Debug, Clone)]
@@ -2603,7 +2605,9 @@ impl FstatReturn {
         retval: i64,
         process: &StoppedProcess,
     ) -> Result<Self, OsError> {
-        Ok(FstatReturn {})
+        Ok(FstatReturn {
+            stat: FromStoppedProcess::from_process(process, enter.stat_buf_out as u64)?,
+        })
     }
 }
 

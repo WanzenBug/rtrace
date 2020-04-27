@@ -325,7 +325,10 @@ pub struct Fsopen {}
 pub struct Fspick {}
 
 #[derive(Debug, Clone)]
-pub struct Fstat {}
+pub struct Fstat {
+    pub file_descriptor: i32,
+    pub stat_buf_out: *mut c_void,
+}
 
 #[derive(Debug, Clone)]
 pub struct Fstat64 {}
@@ -2228,7 +2231,10 @@ impl Fspick {
 
 impl Fstat {
     pub fn from_args(args: [u64; 6], process: &StoppedProcess) -> Result<Self, OsError> {
-        Ok(Fstat {})
+        Ok(Fstat {
+            file_descriptor: args[0] as i32,
+            stat_buf_out: args[1] as *mut c_void,
+        })
     }
 }
 
