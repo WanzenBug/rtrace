@@ -8,8 +8,10 @@ currently supported.
 
 ## Demo
 
-The repo contains a sample program that enhances [dvc](https://github.com/iterative/dvc/) with some
-convenience around creating a pipeline.
+The repo contains two sample programs:
+
+* `dry` enhances [dvc](https://github.com/iterative/dvc/) with some convenience around creating a pipeline.
+* `rtrace` is a simple re-implementation of `strace` in rust.
 
 ### dry
 `dry` is a prototype of a more user-friendly `dvc run`. Instead of manually adding all
@@ -76,9 +78,19 @@ meta:
 ```
 
 #### Implementation details
-`dry` tries to pull the inputs of the command by tracing the syscalls that are executed. This is done via the
-`ptrace` API, also used by the `strace` tool. As the API is quite clunky on older kernels, `dry` requires Linux
-5.3 or above. Also, its is developed and tested on x86_64 only.
+`dry` tries to pull the inputs of the command by tracing the syscalls that are executed.
 
 Things the are considered input:
 * Every **file** in the current repository
+
+### rtrace
+
+```
+$ cargo run --bin rtrace --features=rtrace python3 -c "import json"
+PID  5872|SyscallEnter(Execve(Execve { filename: "/home/mwanzenboeck/.cargo/bin/python3", argv: ["python3", "-c", "import json"], envp: ["CARGO=/home/mwanzenboeck/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo", ...] }))
+PID  5872|SyscallExit(SyscallError(Os { code: 2, kind: NotFound, message: "No such file or directory" }))
+PID  5872|SyscallEnter(Execve(Execve { filename: "/home/mwanzenboeck/.local/bin/python3", argv: ["python3", "-c", "import json"], envp: ["CARGO=/home/mwanzenboeck/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo", ...] }))
+...
+PID  5872|SyscallEnter(ExitGroup(ExitGroup { code: 0 }))
+PID  5872|Exit(0)
+```
