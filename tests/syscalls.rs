@@ -5,6 +5,7 @@ use log::trace;
 use sha2::Digest;
 use sha2::Sha256;
 
+use rtrace::enhanced_tracer::syscall_defs::*;
 use rtrace::enhanced_tracer::EnhancedEvent;
 use rtrace::enhanced_tracer::EnhancedEventKind;
 use rtrace::enhanced_tracer::EnhancedTracer;
@@ -17,6 +18,7 @@ const CODE_PREFIX: &'static str = r#"
 #include <unistd.h>
 #include <sched.h>
 #include <sys/syscall.h>
+#include <time.h>
 
 int main() {
     sched_yield();
@@ -110,10 +112,10 @@ fn test_exe(c_code: &str) -> impl Iterator<Item = Result<EnhancedEvent, OsError>
     let mut iter = test_cmd.on_process_event(EnhancedTracer::new());
 
     assert_next_event_matches!(iter, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::Execve{ .. }), .. }, "Error in setup");
-    assert_next_event_matches!(iter, EnhancedEvent { kind: EnhancedEventKind::SyscallExit(Ok(SyscallExit::Execve)), .. });
+    assert_next_event_matches!(iter, EnhancedEvent { kind: EnhancedEventKind::SyscallExit(SyscallExit::SyscallGood(_)), .. });
     loop {
         if let EnhancedEvent {
-            kind: EnhancedEventKind::SyscallEnter(SyscallEnter::SchedYield),
+            kind: EnhancedEventKind::SyscallEnter(SyscallEnter::SchedYield(_)),
             ..
         } = iter
             .next()
@@ -123,7 +125,7 @@ fn test_exe(c_code: &str) -> impl Iterator<Item = Result<EnhancedEvent, OsError>
             break;
         }
     }
-    assert_next_event_matches!(iter, EnhancedEvent { kind: EnhancedEventKind::SyscallExit(Ok(SyscallExit::SchedYield)), ..});
+    assert_next_event_matches!(iter, EnhancedEvent { kind: EnhancedEventKind::SyscallExit(SyscallExit::SyscallGood(_)), ..});
     iter
 }
 
@@ -132,7 +134,7 @@ fn test_exit() {
     let mut process = test_exe("syscall(SYS_exit, 3);");
 
     // Receive syscall enter event
-    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::Exit { code: 3 }), .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::Exit(Exit { code: 3 })), .. });
     assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::Exit(3), .. });
 
     // Process not running anymore
@@ -144,9 +146,9 @@ fn test_open() {
     use std::path::Path;
 
     let mut process = test_exe(r#"syscall(SYS_open, "/dev/null", 2);"#);
-    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::Open { path, .. }), .. } if path.as_path() == Path::new("/dev/null"));
-    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallExit(Ok(SyscallExit::Open(_))), .. });
-    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::ExitGroup { code: 0 }), .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::Open(Open { filename, .. })), .. } if filename == Path::new("/dev/null"));
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallExit(SyscallExit::SyscallGood(_)), .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::ExitGroup(ExitGroup { code: 0 })), .. });
     assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::Exit(0), .. });
     assert_iteration_end!(process);
 }
@@ -157,9 +159,24 @@ fn test_open_failure() {
     assert!(!std::path::Path::new("/dev/404").exists());
 
     let mut process = test_exe(r#"syscall(SYS_open, "/dev/404", 2);"#);
-    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::Open { path, .. }), .. } if path.as_path() == Path::new("/dev/404"));
-    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallExit(Err(_)), .. });
-    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::ExitGroup { code: 0 }), .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::Open(Open { filename, .. })), .. } if filename == Path::new("/dev/404"));
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallExit(SyscallExit::SyscallError(_)), .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::ExitGroup(ExitGroup { code: 0 })), .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::Exit(0), .. });
+    assert_iteration_end!(process);
+}
+
+#[test]
+fn test_clock_gettime() {
+    let mut process = test_exe(
+        r#"
+    struct timespec tp;
+    syscall(SYS_clock_gettime, CLOCK_MONOTONIC, &tp);
+    "#,
+    );
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::ClockGettime(ClockGettime { which_clock: SystemClock::Monotonic, .. })), .. });
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallExit(SyscallExit::SyscallGood(SyscallReturn::ClockGettime(ClockGettimeReturn { timespec }))), .. } if timespec.sec != 0);
+    assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::SyscallEnter(SyscallEnter::ExitGroup(ExitGroup { code: 0 })), .. });
     assert_next_event_matches!(process, EnhancedEvent { kind: EnhancedEventKind::Exit(0), .. });
     assert_iteration_end!(process);
 }
