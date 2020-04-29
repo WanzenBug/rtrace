@@ -1,3 +1,39 @@
+//! This crate is intended to provide a safe (and user-friendly!) wrapper around raw [`ptrace()`].
+//! It extends the default `std::process::Command` with a new way to spawn: [`TracingCommand::spawn_with_tracing`]
+//!
+//! # Example
+//! ```rust
+//! use rtrace::OsError;
+//! # fn main() -> Result<(), OsError> {
+//! use rtrace::TracingCommand;
+//! use rtrace::StoppedProcess;
+//! use std::process::Command;
+//!
+//! // Create a normal process. Instead of `spawn`, use `spawn_with_tracing` from the `TracingCommand` trait.
+//! let child = Command::new("echo")
+//!     .arg("Hello World!")
+//!     .spawn_with_tracing()?;
+//!
+//! // Next we need an event handler that will be called whenever a tracing event happened.
+//! // It will be given a handle to the stopped process. When this handle is consumed, the process
+//! // will continue execution. You can return a value from this event handler which will be passed
+//! // to the...
+//! let event_handler = |mut stopped_process: StoppedProcess| -> Result<Option<String>, OsError> {
+//!     let event = stopped_process.event()?;
+//!     Ok(Some(format!("{:?}", event.kind())))
+//! };
+//!
+//! // ...iterator created by `on_process_event`. All the `Some(_)` results of the above calls
+//! // will consumed here. If no iteration happens, the process will not make progress.
+//! for event in child.on_process_event(event_handler) {
+//!     println!("{}", event?);
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! [`ptrace()`]: http://man7.org/linux/man-pages/man2/ptrace.2.html
+//! [`TracingCommand::spawn_with_tracing`]: ./trait.TracingCommand.html
 use std::collections::HashMap;
 pub use std::io::Error as OsError;
 use std::io::ErrorKind;
@@ -12,6 +48,7 @@ pub use crate::event::ProcessEventKind;
 pub use crate::process::StoppedProcess;
 use crate::raw::get_syscall_number;
 use crate::raw::p_trace_become_tracer;
+use crate::raw::p_trace_detach;
 use crate::raw::p_trace_syscall;
 use crate::raw::ChildState;
 pub use crate::wait_pid::PTraceEventKind;
@@ -233,5 +270,11 @@ where
                 Err(e) => return Some(Err(e)),
             }
         }
+    }
+}
+
+impl Drop for TracedChildTree {
+    fn drop(&mut self) {
+        let _ = p_trace_detach(self._child, None);
     }
 }
