@@ -15,3 +15,9 @@ repos:
         language: system
         entry: rustfmt
         files: ".*\\.rs"
+    -   id: clippy
+        name: clippy must be happy
+        language: system
+        entry: cargo clippy
+        files: ".*\\.rs"
+        pass_filenames: false

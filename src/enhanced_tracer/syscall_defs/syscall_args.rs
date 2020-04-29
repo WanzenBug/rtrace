@@ -145,18 +145,18 @@ bitflags! {
 
 bitflags! {
     pub struct OpenMode: u64 {
-        const S_IRWXU = 00700;
-        const S_IRUSR = 00400;
-        const S_IWUSR = 00200;
-        const S_IXUSR = 00100;
-        const S_IRWXG = 00070;
-        const S_IRGRP = 00040;
-        const S_IWGRP = 00020;
-        const S_IXGRP = 00010;
-        const S_IRWXO = 00007;
-        const S_IROTH = 00004;
-        const S_IWOTH = 00002;
-        const S_IXOTH = 00001;
+        const S_IRWXU = 700;
+        const S_IRUSR = 400;
+        const S_IWUSR = 200;
+        const S_IXUSR = 100;
+        const S_IRWXG = 70;
+        const S_IRGRP = 40;
+        const S_IWGRP = 20;
+        const S_IXGRP = 10;
+        const S_IRWXO = 7;
+        const S_IROTH = 4;
+        const S_IWOTH = 2;
+        const S_IXOTH = 1;
     }
 }
 
@@ -188,7 +188,7 @@ bitflags! {
         const MAP_SHARED_VALIDATE = 0x03;
         const MAP_STACK = 0x20000;
         const MAP_SYNC = 0x80000;
-        const MAP_UNINITIALIZED = 0x4000000;
+        const MAP_UNINITIALIZED = 0x0400_0000;
     }
 }
 

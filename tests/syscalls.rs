@@ -1,6 +1,5 @@
 use std::io::Write;
 
-use cc;
 use log::trace;
 use sha2::Digest;
 use sha2::Sha256;
@@ -14,7 +13,7 @@ use rtrace::enhanced_tracer::SyscallExit;
 use rtrace::OsError;
 use rtrace::TracingCommand;
 
-const CODE_PREFIX: &'static str = r#"
+const CODE_PREFIX: &str = r#"
 #include <unistd.h>
 #include <sched.h>
 #include <sys/syscall.h>
@@ -23,7 +22,7 @@ const CODE_PREFIX: &'static str = r#"
 int main() {
     sched_yield();
 "#;
-const CODE_SUFFIX: &'static str = r#"
+const CODE_SUFFIX: &str = r#"
     return 0;
 }
 "#;
